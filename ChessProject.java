@@ -12,11 +12,18 @@ import java.util.Map;
 import java.util.function.Supplier;
 import java.lang.Math;
 
-public class Main {
+public class ChessProject {
     public static void main(String[] args) {
         /*
         PASTE INTO TERMINAL:
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\chess project.java"
+
+        TO DO:
+        1. update(i) in evalQ()
+        2. Fix undoStack so it doesn't just continually copy state arrays
+        3. replace byte[72] with bitboards (long[12], etc) and do BITWISE!
+        3. replace attack maps, vision, with bitboards, precomputed attack maps
+        4. Use this for ultra-efficient legal move generation
 
         */
         try {
@@ -312,7 +319,8 @@ public class Main {
 class Position {
     int[] position; //can't use byte[] because arithmetic operations will be performed
     int limit, maxDepth;
-    ArrayList<int[]> undoStack = new ArrayList<>();
+    int[][] undoStack = new int[50][72];
+    int undoDeep = 0; 
     //transposition table
 
     long[] table14 = new long[Reference.length * 4];
@@ -376,7 +384,6 @@ class Position {
         otherInfo[slot][2] = depth;
         otherInfo[slot][3] = bound;
     }
-    ArrayList<Integer> pruneHistory = new ArrayList<>(); //moves stored as start * 100 + end
     byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
     int bishopPairBonus() {
@@ -806,7 +813,10 @@ class Position {
         }
     }
     void makeMove(int start, int end) {
-        undoStack.add(position.clone());
+        for (int i = 0; i < 72; i++) {
+            undoStack[undoDeep][i] = position[i];
+        }
+        undoDeep++;
         int piece = getPiece(start);
         int captured = getPiece(end);
         boolean epBefore = position[69] != 0;
@@ -918,9 +928,12 @@ class Position {
         position[64] = 1 - position[64];
     }
     void restore() {
-        int[] previousPosition = undoStack.remove(undoStack.size() - 1);
-        int[] currentPosition = position.clone();
+        undoDeep--;
+        int[] previousPosition = (undoDeep >= 0) ? undoStack[undoDeep] : new int[72]; //safeguard, shouldn't ever happen
         System.arraycopy(previousPosition, 0, position, 0, position.length);
+        for (int i = 0; i < 72; i++) {
+            undoStack[undoDeep][i] = 0;
+        }
     }
     byte[] legalMoves(int square) {
         legalMovesBasic(square);
@@ -1136,11 +1149,6 @@ class Position {
                 moves[i][2] = Integer.MAX_VALUE - 361 + difference;
                 continue;
             }
-            //history
-            if (pruneHistory.contains(start * 100 + end)) {
-                moves[i][2] = Integer.MIN_VALUE;
-                continue;
-            }
             //quiet moves not principal or in history, counting up from 0 as opposed to counting down from 2147483647
             int cumulative = 0;
             //reward center-seeking moves
@@ -1326,21 +1334,10 @@ class Position {
         if (!checked) {
             //update everything temporarily
             if (changeEval) {
-                byte[] pa0 = pieceActivity.clone(), m0 = material.clone(), cc0 = centralControl.clone(),
-                ks0 = kingSafety.clone(), s0 = space.clone(), rs0 = rooksSeventh.clone(), o0 = outposts.clone();
                 for (int i = 1; i <= 64; i++) {
                     update(i);
                 }
-                //set value
                 best = currentCount(false);
-                //revert
-                pieceActivity = pa0;
-                material = m0; 
-                centralControl = cc0;
-                kingSafety = ks0;
-                space = s0;
-                rooksSeventh = rs0;
-                outposts = o0;
             }
             if (maximizing) {
                 if (best >= beta) return best;
@@ -1401,7 +1398,7 @@ class Position {
         boolean maximizing = position[64] == 1;
         //null move pruning
         boolean hasNullMoveBound = maximizing ? beta < Integer.MAX_VALUE : alpha > Integer.MIN_VALUE;
-        if (depth > 2 && hasNullMoveBound && !pawnEndgame() && !inCheck()) {
+        if (depth > 2 && hasNullMoveBound && !pawnEndgame() && !inCheck() && depth < maxDepth) { //don't want to do this at the root node
             int[] evalPass;
             int enPassantSquare = position[69];
             position[64] = 1 - position[64]; //make a null move
@@ -1434,18 +1431,6 @@ class Position {
         int bestEnd = 0;
         //int evalStatic = currentCount(false);
         for (int i = 0; i < moves[0].length; i++) {
-            /*if (depth == 1 && !isTacticalMove(moves[0][i], moves[1][i]) && !inCheck()) {
-                //futility pruning
-                if ((maximizing && evalStatic + 50 < alpha) || (!maximizing && evalStatic - 50 > beta)) {
-                    pruneHistory.add(moves[0][i] * 100 + moves[1][i]);
-                    break;
-                }
-                //reverse futility pruning
-                if ((maximizing && evalStatic - 50 > beta) || (!maximizing && evalStatic + 50 < alpha)) {
-                    pruneHistory.add(moves[0][i] * 100 + moves[1][i]);
-                    return new int[]{(maximizing) ? beta : alpha, moves[0][0], moves[1][0]};
-                }
-            }*/
             boolean nodeInCheck = inCheck();
             boolean reduce = depth > 2 && i >= 3 && !isTacticalMove(moves[0][i], moves[1][i]) && !inCheck(); 
             makeMove(moves[0][i], moves[1][i]); //color to move is now flipped
@@ -1479,7 +1464,6 @@ class Position {
                 beta = Math.min(beta, evaluation);
             }
             if (alpha >= beta) {
-                pruneHistory.add(moves[0][i] * 100 + moves[1][i]);
                 break;
             }
         }
@@ -1496,7 +1480,7 @@ class Position {
     }
 }
 class Reference {
-    static final int length = 1000;
+    static final int length = 8_388_608; //2 ^ 23
     static final Map<Integer, Integer> knightBonus = Map.ofEntries(
         Map.entry(1, -25), Map.entry(2, -20), Map.entry(3, -15), Map.entry(4, -15), Map.entry(5, -15), Map.entry(6, -15), Map.entry(7, -20), Map.entry(8, -25),
         Map.entry(9, -20), Map.entry(10, -20), Map.entry(11, -15), Map.entry(12, -10), Map.entry(13, -10), Map.entry(14, -15), Map.entry(15, -20), Map.entry(16, -20),
