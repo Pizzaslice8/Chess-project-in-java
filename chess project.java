@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.function.Supplier;
 import java.lang.Math;
 
@@ -18,6 +17,7 @@ public class Main {
         /*
         PASTE INTO TERMINAL:
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\chess project.java"
+
         */
         try {
             run();
@@ -25,9 +25,12 @@ public class Main {
             System.out.println("\nInterrupt");
         } catch (GameAlreadyOverException g) {
             String message = switch (g.getMessage()) {
-                case "1" -> "Checkmate white wins";
-                case "2" -> "Checkmate black wins";
-                default -> "Draw";
+                case "1":
+                    yield "Checkmate white wins";
+                case "2":
+                    yield "Checkmate black wins";
+                default:
+                    yield "Draw";
             };
             printRed("Game already over:");
             System.out.println(message);
@@ -156,7 +159,6 @@ public class Main {
         int timeLimit = scanner.nextInt();
         Position pos = new Position(setup, timeLimit * 1000, depth);
         pos.display();
-        //pos.history.add(condense(setup));
         try {
             pos.gameStatus();
         } catch (GameEndsException status) {
@@ -310,9 +312,70 @@ public class Main {
 class Position {
     int[] position; //can't use byte[] because arithmetic operations will be performed
     int limit, maxDepth;
-    //ArrayList<List<Integer>> history = new ArrayList<List<Integer>>();
     ArrayList<int[]> undoStack = new ArrayList<>();
-    HashMap<List<Integer>, int[]> alreadyEvaluated = new HashMap<>(); //position, {evaluation, bestStart, bestEnd, depth searched, bound: -1 = lower, 0 = exact, 1 = upper}
+    //transposition table
+
+    long[] table14 = new long[Reference.length * 4];
+    long[] table58 = new long[Reference.length];
+    boolean[] tableUsed = new boolean[Reference.length];
+    int[] evals = new int[Reference.length]; //in decipawns
+    int[][] otherInfo = new int[Reference.length][4]; //best move from, best move to, depth searched, bound
+    int getIndex(int[] pos) {
+        long hash = 0x9E3779B97F4A7C15L;
+        for (int word = 0; word < 4; word++) {
+            long packed = packedBoardWord(pos, word);
+            hash = Long.rotateLeft(hash ^ packed, 27) * 0x94D049BB133111EBL;
+        }
+        long metadata = positionMetadata(pos);
+        hash = Long.rotateLeft(hash ^ metadata, 27) * 0x94D049BB133111EBL;
+        int slot = (int) Math.floorMod(hash, Reference.length);
+        if (!tableUsed[slot] || table58[slot] != metadata) return -1;
+        for (int word = 0; word < 4; word++) {
+            if (table14[slot * 4 + word] != packedBoardWord(pos, word)) return -1;
+        }
+        return slot;
+    }
+    long packedBoardWord(int[] pos, int word) {
+        long packed = 0L;
+        for (int square = 0; square < 16; square++) {
+            packed |= (long) (pos[word * 16 + square] & 0x0F) << (square * 4);
+        }
+        return packed;
+    }
+    long positionMetadata(int[] pos) {
+        return ((long) pos[70] << 12)
+            | ((long) pos[69] << 5)
+            | ((long) pos[65] << 4)
+            | ((long) pos[66] << 3)
+            | ((long) pos[67] << 2)
+            | ((long) pos[68] << 1)
+            | pos[64];
+    }
+    void store(int[] pos, int evaluation, int bestStart, int bestEnd, int depth, int bound) {
+        long hash = 0x9E3779B97F4A7C15L;
+        for (int word = 0; word < 4; word++) {
+            long packed = packedBoardWord(pos, word);
+            hash = Long.rotateLeft(hash ^ packed, 27) * 0x94D049BB133111EBL;
+        }
+        long metadata = positionMetadata(pos);
+        hash = Long.rotateLeft(hash ^ metadata, 27) * 0x94D049BB133111EBL;
+        int slot = (int) Math.floorMod(hash, Reference.length);
+        int existingSlot = getIndex(pos);
+        if (existingSlot != -1) {
+            if (otherInfo[existingSlot][2] > depth) return;
+            slot = existingSlot;
+        }
+        for (int word = 0; word < 4; word++) {
+            table14[slot * 4 + word] = packedBoardWord(pos, word);
+        }
+        table58[slot] = metadata;
+        tableUsed[slot] = true;
+        evals[slot] = evaluation;
+        otherInfo[slot][0] = bestStart;
+        otherInfo[slot][1] = bestEnd;
+        otherInfo[slot][2] = depth;
+        otherInfo[slot][3] = bound;
+    }
     ArrayList<Integer> pruneHistory = new ArrayList<>(); //moves stored as start * 100 + end
     byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
@@ -434,108 +497,6 @@ class Position {
                 default -> Math.pow(equivalent, 2) / 12.0; //flank files, a, b, g, h
             };
             space[square-1] = (byte) Math.round(modifier * addition);
-        }
-    }
-    void updatePosition(int square) {
-        update(square);
-
-        for (int s = 1; s <= 64; s++) {
-            if (s == square) continue; //already been updated
-            int piece = getPiece(s);
-            if (piece == 0) {
-                pieceActivity[s-1] = 0;
-                material[s-1] = 0;
-                centralControl[s-1] = 0;
-                kingSafety[s-1] = 0;
-                space[s-1] = 0;
-                rooksSeventh[s-1] = 0;
-                outposts[s-1] = 0;
-                continue;
-            }
-            //for rooks possibly moved by castling, override and run update() instead
-            if ((piece == 5) && (s == 4 || s == 6)) {
-                update(s);
-                continue;
-            }
-            if ((piece == 6) && (s == 60 || s == 62)) {
-                update(s);
-                continue;
-            }
-            vision(s);
-            int modifier = (Main.color(piece)) ? 1 : -1;
-            int sameColorPawn = (23 - modifier) / 2;
-            byte[] pieceVision = retrieve(0);
-            centralControl[s-1] = 0;
-            for (byte q: pieceVision) {
-                if (q == 28 || q == 29 || q == 36 || q == 37) {
-                    centralControl[s-1] = (byte) (centralControl[s-1] + 2 * modifier);
-                }
-            }
-            // pieceActivity only calculated based on pieceVision.length for bishops/rooks/queens
-            // kings and knights have their own metrics, and pawns aren't calculated
-            if (piece == 3 || piece == 4) {
-                pieceActivity[s-1] = (byte) (modifier * pieceVision.length / 4);
-            } else if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
-                pieceActivity[s-1] = (byte) (modifier * pieceVision.length / 2);
-            }  
-            /*
-            only 3 things other than vision that are affected by other pieces:
-            pawn protection for outposts,
-            pawn cover for kings,
-            and captures affecting whether an endgame has been reached
-            */
-            switch (piece) {
-                //check if pawn in front of king moved
-                case 1:
-                case 2:
-                    double proximityToCenter = Math.hypot(Main.getX(s) - 4.5, Main.getY(s) - 4.5);
-                    if (endgame()) {
-                        pieceActivity[s-1] = (byte) (modifier * (10 - Math.round(proximityToCenter * 1.7)));
-                    } else {
-                        kingSafety[s-1] = (byte) (modifier * (Math.round(proximityToCenter * 1.7) - 10));
-                        if (getPiece(Main.translate(s, 0, modifier)) == sameColorPawn) {
-                            kingSafety[s-1] = (byte) (kingSafety[s-1] + modifier * 10); //pawn in front of king
-                        }
-                        if (getPiece(Main.translate(s, 1, modifier)) == sameColorPawn) {
-                            kingSafety[s-1] = (byte) (kingSafety[s-1] + modifier * 5);
-                        }
-                        if (getPiece(Main.translate(s, -1, modifier)) == sameColorPawn) {
-                            kingSafety[s-1] = (byte) (kingSafety[s-1] + modifier * 5);
-                        }
-                    }
-                    break;
-                //check if pawn protecting an outpost has moved
-                case 7:
-                case 8:
-                    outposts[s-1] = 0;
-                    if (s == ((piece == 7) ? 36 : 28) || s == ((piece == 7) ? 37 : 29)) {
-                        if (getPiece(Main.translate(s, 1, -modifier)) == sameColorPawn || getPiece(Main.translate(s, -1, -modifier)) == sameColorPawn) {
-                            outposts[s-1] = (byte) (modifier * 5);
-                        }
-                    }
-                    break;
-                case 9:
-                case 10:
-                    int equivalentY = 9 - Main.getY(s);
-                    int equivalent = Main.getX(s) + 8 * (equivalentY - 1);
-                    pieceActivity[s-1] = (byte) (modifier * Reference.knightBonus.get((piece == 9) ? s : equivalent).intValue());
-                    outposts[s-1] = 0;
-                    if (getPiece(Main.translate(s, 1, -modifier)) == sameColorPawn || getPiece(Main.translate(s, -1, -modifier)) == sameColorPawn) {
-                        if (Main.getY(s) == ((piece == 9) ? 5 : 4) || Main.getY(s) == ((piece == 9) ? 6 : 3)) {
-                            //knight outposts typically only apply on 5th and 6th rank (white), 4th and 3rd rank (black)
-                            if (Main.getX(s) >= 3 && Main.getX(s) <= 6) {
-                                //center files, which are more valuable
-                                outposts[s-1] = (byte) (modifier * 8);
-                            } else {
-                                // flank files
-                                outposts[s-1] = (byte) (modifier * 4);
-                            }
-                        }
-                    }
-                    break;
-                default:
-                    break;
-            }
         }
     }
     Position(int[] setup, int timeLimit, int depth) {
@@ -845,9 +806,6 @@ class Position {
         }
     }
     void makeMove(int start, int end) {
-        makeMove(start, end, true);
-    }
-    void makeMove(int start, int end, boolean changeEval) {
         undoStack.add(position.clone());
         int piece = getPiece(start);
         int captured = getPiece(end);
@@ -958,40 +916,27 @@ class Position {
                 break;
         }
         position[64] = 1 - position[64];
-        if (changeEval) {
-            updatePosition(start);
-            updatePosition(end);
-        }
-        //history.add(Main.cast(position));
     }
     void restore() {
-        restore(true);
-    }
-    void restore(boolean changeEval) {
         int[] previousPosition = undoStack.remove(undoStack.size() - 1);
         int[] currentPosition = position.clone();
         System.arraycopy(previousPosition, 0, position, 0, position.length);
-        if (changeEval) {
-            for (int i = 0; i < 64; i++) {
-                if (previousPosition[i] != currentPosition[i]) {
-                    updatePosition(i+1);
-                }
-            }
-        }
-        //history.remove(history.size() - 1);
     }
-    Byte[] legalMoves(int square) {
-        legalMovesBasic(square); // placeholder
+    byte[] legalMoves(int square) {
+        legalMovesBasic(square);
         byte[] basicMoves = retrieve(0);
-        ArrayList<Byte> output = new ArrayList<>();
+        clearPad(8);
+        int i = 0;
         for (byte move : basicMoves) {
-            makeMove(square, move, false);
+            makeMove(square, move);
             position[64] = 1 - position[64];
-            if (!inCheck()) {
-                output.add(move);
+            boolean checkedAfterMove = inCheck();
+            if (!checkedAfterMove) {
+                pad[8][i] = move;
+                i++;
             }
             position[64] = 1 - position[64];
-            restore(false);
+            restore();
         }
         if (!inCheck()) {
             if (square == 5) {
@@ -1012,8 +957,8 @@ class Position {
                     position[6] = 0;
                     position[4] = 1;
                     if (allowed) {
-                        byte q = 7;
-                        output.add(q);
+                        pad[8][i] = 7;
+                        i++;
                     }    
                 }
                 if (position[66] == 1 && getPiece(1) == 5 && getPiece(4) == 0 && getPiece(3) == 0 && getPiece(2) == 0) {   
@@ -1033,8 +978,8 @@ class Position {
                     position[2] = 0;
                     position[4] = 1;
                     if (allowed) {
-                        byte q = 3;
-                        output.add(q);
+                        pad[8][i] = 3;
+                        i++;
                     }
                 }
             }
@@ -1056,8 +1001,8 @@ class Position {
                     position[62] = 0;
                     position[60] = 2;
                     if (allowed) {
-                        byte q = 63;
-                        output.add(q);
+                        pad[8][i] = 63;
+                        i++;
                     }    
                 }
                 if (position[68] == 1 && getPiece(57) == 6 && getPiece(60) == 0 && getPiece(59) == 0 && getPiece(58) == 0) {   
@@ -1077,41 +1022,42 @@ class Position {
                     position[58] = 0;
                     position[60] = 2;
                     if (allowed) {
-                        byte q = 59;
-                        output.add(q);
+                        pad[8][i] = 59;
+                        i++;
                     }
                 }
             }
         }
-        return output.toArray(new Byte[0]);
+        return retrieve(8);
     }
     boolean inCheck() {
         int king = kingSquare();
         byte modified = (byte) king;
-        Byte[] squareMap = attackMap(1 - position[64]);
-        for (Byte square : squareMap) {
-            byte q = square;
-            if (q == king) {
+        byte[] squareMap = attackMap(1 - position[64]);
+        for (byte square : squareMap) {
+            if (square == king) {
                 return true;
             }
         }
         return false;
     }
-    Byte[] attackMap(int color) {
+    byte[] attackMap(int color) {
         //1 = white, 0 = black
-        ArrayList<Byte> output = new ArrayList<>();
-        for (int i = 0; i < 64; i++) {
-            if (position[i] != 0) {
-                if ((color == 1 && Main.color(position[i])) || (color == 0 && !Main.color(position[i]))) {
-                    vision(i+1);
+        clearPad(7);
+        int i = 0;
+        for (int j = 0; j < 64; j++) {
+            if (position[j] != 0) {
+                if ((color == 1 && Main.color(position[j])) || (color == 0 && !Main.color(position[j]))) {
+                    vision(j+1);
                     byte[] additions = retrieve(0);
                     for (byte b : additions) {
-                        output.add(b);
+                        pad[7][i] = b;
+                        i++;
                     }
                 }
             }
         }
-        return output.toArray(new Byte[0]);
+        return retrieve(7);
     }
     byte[][] generateMoves() {
         clearPad(5);
@@ -1125,13 +1071,12 @@ class Position {
             
             if (position[j] != 0 && color == toMove) {
                 //square is not empty and is of the color to move
-                Byte[] moves = legalMoves(j+1);
+                byte[] moves = legalMoves(j+1);
                 if (moves.length > 0) {
                     //piece has legal moves
-                    for (Byte move : moves) {
+                    for (byte move : moves) {
                         pad[5][i] = (byte) (j+1);
-                        byte q = move;
-                        pad[6][i] = q;
+                        pad[6][i] = move;
                         i++;
                     }
                 }
@@ -1144,8 +1089,10 @@ class Position {
     }
     byte[][] sortMoves(byte[][] unsortedMoves) {
         int[][] moves = new int[unsortedMoves[0].length][3]; //from, to, score
-        int[] cachedMove = alreadyEvaluated.get(Main.cast(position));
         boolean isEndgame = endgame();
+        int cachedIndex = getIndex(position);
+        int cachedStart = cachedIndex == -1 ? 0 : otherInfo[cachedIndex][0];
+        int cachedEnd = cachedIndex == -1 ? 0 : otherInfo[cachedIndex][1];
         /*score based on:
         1. cached best move
         2. captures, most valuable victim, least valuable attacker
@@ -1164,7 +1111,7 @@ class Position {
             moves[i][0] = start;
             moves[i][1] = end;
             //Prefer the best move previously found for this position.
-            if (cachedMove != null && start == cachedMove[1] && end == cachedMove[2]) {
+            if (cachedIndex != -1 && start == cachedStart && end == cachedEnd) {
                 moves[i][2] = Integer.MAX_VALUE;
                 continue;
             }
@@ -1260,16 +1207,7 @@ class Position {
             }
             throw new GameEndsException(0); //stalemate
         }
-        /*int[] max = {0};
-        boolean[] three = {false};
-        history.forEach(s -> {
-            max[0] = Collections.frequency(history, s);
-            if (max[0] >= 3) {
-                //threefold repetition
-                three[0] = true;
-            }
-        });*/
-        if (!sufficientMaterial() || position[71] >= 100 /*|| three[0]*/) {
+        if (!sufficientMaterial() || position[71] >= 100) {
             throw new GameEndsException(0);
         }
     }
@@ -1376,198 +1314,34 @@ class Position {
         }
         return true;
     }
-    int count() {
-        return count(true);
-    }
-    int count(boolean checkStatus) {
-        // leaf node!
-        if (checkStatus) {
-            try {gameStatus();} catch (GameEndsException g) {
-                return switch (g.getMessage()) {
-                    case "1" -> Integer.MAX_VALUE;
-                    case "2" -> Integer.MIN_VALUE;
-                    default -> 0;
-                };
-            }
-        }
-        int material = 0, pieceActivity = 0, kingSafety = 0, centralControl = 0;
-        int space = 0, bishopPair = 0, rooksSeventh = 0, outposts = 0;
-        int bonus = (position[64] == 1) ? 1 : -1; // side to move gets 1 decipawn (1/10 pawn)
-        int whiteBishops = 0, blackBishops = 0;
-        for (int i = 1; i <= 64; i++) {
-            vision(i);
-            byte[] pieceVision = retrieve(0);
-            for (byte square : pieceVision) {
-                int modifier = (Main.color(getPiece(i))) ? 2 : -2;
-                if (square == 28 || square == 29 || square == 36 || square == 37) {
-                    centralControl += modifier;
-                }
-            }
-            material += Main.materialWorth(getPiece(i));
-            double proximityToCenter, addition;
-            switch (getPiece(i)) {
-                case 1:
-                    proximityToCenter = Math.hypot(Main.getX(i) - 4.5, Main.getY(i) - 4.5);
-                    if (endgame()) {
-                        pieceActivity += 10 - Math.round(proximityToCenter * 1.7); //should be roughly 0 if the king is on a1/h1
-                    } else {
-                        kingSafety += Math.round(proximityToCenter * 1.7) - 10; //do the opposite
-                        if (getPiece(Main.translate(i, 0, 1)) == 11) {
-                            kingSafety += 10; //pawn in front of king
-                        }
-                        if (getPiece(Main.translate(i, 1, 1)) == 11) {
-                            kingSafety += 5;
-                        }
-                        if (getPiece(Main.translate(i, -1, 1)) == 11) {
-                            kingSafety += 5;
-                        }
-                    }
-                    break;
-                case 2:
-                    proximityToCenter = Math.hypot(Main.getX(i) - 4.5, Main.getY(i) - 4.5);
-                    if (endgame()) {
-                        pieceActivity -= 10 - Math.round(proximityToCenter * 1.7); //should be roughly 0 if the king is on a8/h8
-                    } else {
-                        kingSafety -= Math.round(proximityToCenter * 1.7) - 10; //do the opposite
-                        if (getPiece(Main.translate(i, 0, -1)) == 12) {
-                            kingSafety -= 10; //pawn in front of king
-                        }
-                        if (getPiece(Main.translate(i, 1, -1)) == 12) {
-                            kingSafety -= 5;
-                        }
-                        if (getPiece(Main.translate(i, -1, -1)) == 12) {
-                            kingSafety -= 5;
-                        }
-                    }
-                    break;
-                case 3:
-                    //piece activity is weighed less for queens, normally it's half a decipawn for each square controlled
-                    pieceActivity += pieceVision.length / 4;
-                    break;
-                case 4:
-                    pieceActivity -= pieceVision.length / 4;
-                    break;
-                case 5:
-                    pieceActivity += pieceVision.length / 2;
-                    if (Main.getY(i) == 7) {
-                        rooksSeventh += 15;
-                    }
-                    if (Main.getY(i) == 6 || Main.getY(i) == 8) {
-                        rooksSeventh += 5;
-                    }
-                    break;
-                case 6:
-                    pieceActivity -= pieceVision.length / 2;
-                    if (Main.getY(i) == 2) {
-                        rooksSeventh -= 15;
-                    }
-                    if (Main.getY(i) == 1 || Main.getY(i) == 3) {
-                        rooksSeventh -= 5;
-                    }
-                    break;
-                case 7:
-                    pieceActivity += pieceVision.length / 2;
-                    // bishop outposts, typically called "wooden shields", really only apply on d5 and e5 (white), d4 and e4 (black), typically
-                    // knight outposts are even better though
-                    if (i == 36 || i == 37 /*e5 and d5*/) {
-                        //must be protected by a pawn
-                        if (getPiece(Main.translate(i, 1, -1)) == 11 || getPiece(Main.translate(i, -1, -1)) == 11) {
-                            outposts += 5;
-                        }
-                    }
-                    whiteBishops++;
-                    break;
-                case 8:
-                    pieceActivity -= pieceVision.length / 2;
-                    if (i == 28 || i == 29 /*e4 and d4*/) {
-                        //must be protected by a pawn
-                        if (getPiece(Main.translate(i, 1, 1)) == 12 || getPiece(Main.translate(i, -1, 1)) == 12) {
-                            outposts -= 5;
-                        }
-                    }
-                    blackBishops++;
-                    break;
-                case 9:
-                    if (Main.getY(i) == 5 || Main.getY(i) == 6) {
-                        //knight outposts typically only apply on 5th and 6th rank (white), 4th and 3rd rank (black)
-                        if (Main.getX(i) >= 3 && Main.getX(i) <= 6) {
-                            //center files, which are more valuable
-                            if (getPiece(Main.translate(i, 1, -1)) == 11 || getPiece(Main.translate(i, -1, -1)) == 11) {
-                                outposts += 8;
-                            }
-                        } else {
-                            // flank files
-                            if (getPiece(Main.translate(i, 1, -1)) == 11 || getPiece(Main.translate(i, -1, -1)) == 11) {
-                                outposts += 4;
-                            }
-                        }
-                    }
-                    pieceActivity += Reference.knightBonus.get(i);
-                    break;
-                case 10:
-                    if (Main.getY(i) == 4 || Main.getY(i) == 3) {
-                        if (Main.getX(i) >= 3 && Main.getX(i) <= 6) {
-                            if (getPiece(Main.translate(i, 1, 1)) == 12 || getPiece(Main.translate(i, -1, 1)) == 12) {
-                                outposts -= 8;
-                            }
-                        } else {
-                            if (getPiece(Main.translate(i, 1, 1)) == 12 || getPiece(Main.translate(i, -1, 1)) == 12) {
-                                outposts -= 4;
-                            }
-                        }
-                    }
-                    int equivalentY = 9 - Main.getY(i);
-                    int equivalent = Main.getX(i) + 8 * (equivalentY - 1);
-                    pieceActivity -= Reference.knightBonus.get(equivalent);
-                    break;
-                case 11:
-                    //no pieceactivity metric used for pawns
-                    // space, also kind of helps with giving a bonus for pawns really close to promotion
-                    addition = switch (Main.getX(i)) {
-                        // central space is worth more
-                        case 3, 6 -> Math.pow(Main.getY(i), 2) / 9.0; // c and f files
-                        case 4, 5 -> Math.pow(Main.getY(i), 2) / 7.0; // center files: d and e
-                        default -> Math.pow(Main.getY(i), 2) / 12.0; //flank files, a, b, g, h
-                    };
-                    space += Math.round(addition);
-                    break;
-                case 12:
-                    addition = switch (Main.getX(i)) {
-                        case 3, 6 -> Math.pow(9 - Main.getY(i), 2) / 9.0; // c and f files
-                        case 4, 5 -> Math.pow(9 - Main.getY(i), 2) / 7.0; // center files: d and e
-                        default -> Math.pow(9 - Main.getY(i), 2) / 12.0; //flank files, a, b, g, h
-                    };
-                    space -= Math.round(addition);
-                    break;
-                default:
-                    break;
-            }
-        }
-        //side with bishop pair gets 2 decipawns
-        if (whiteBishops >= 2) {
-            bishopPair += 2; //disregard bishop underpromotion
-        }
-        if (blackBishops >= 2) {
-            bishopPair -= 2;
-        }
-        return material + kingSafety + pieceActivity + centralControl + space + bishopPair + rooksSeventh + outposts + bonus;
-    }
     int[] evalDepth(int depth) throws TimeExceededException {
         return evalDepth(depth, Integer.MIN_VALUE, Integer.MAX_VALUE);
     }
-    int evalQ(byte[][] sortedMoves) {
-        return evalQ(sortedMoves, Integer.MIN_VALUE, Integer.MAX_VALUE);
-    }
-    int evalQ(byte[][] sortedMoves, int alpha, int beta) {
+    int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval) {
         Main.nodes++;
         byte[][] moves = sortedMoves;
         boolean maximizing = position[64] == 1;
         boolean checked = inCheck();
-        int best;
-        if (checked) {
-            best = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
-        } else {
-            best = currentCount(false) /*count(false)*/;
+        int best = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
+        if (!checked) {
+            //update everything temporarily
+            if (changeEval) {
+                byte[] pa0 = pieceActivity.clone(), m0 = material.clone(), cc0 = centralControl.clone(),
+                ks0 = kingSafety.clone(), s0 = space.clone(), rs0 = rooksSeventh.clone(), o0 = outposts.clone();
+                for (int i = 1; i <= 64; i++) {
+                    update(i);
+                }
+                //set value
+                best = currentCount(false);
+                //revert
+                pieceActivity = pa0;
+                material = m0; 
+                centralControl = cc0;
+                kingSafety = ks0;
+                space = s0;
+                rooksSeventh = rs0;
+                outposts = o0;
+            }
             if (maximizing) {
                 if (best >= beta) return best;
                 alpha = Math.max(alpha, best);
@@ -1580,7 +1354,7 @@ class Position {
             if (!checked && !isTacticalMove(moves[0][i], moves[1][i])) continue;
             makeMove(moves[0][i], moves[1][i]);
             int potential;
-            potential = evalQ(sortMoves(generateMoves()), alpha, beta);
+            potential = evalQ(sortMoves(generateMoves()), alpha, beta, false);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1598,22 +1372,25 @@ class Position {
         int alphaOriginal = alpha;
         int betaOriginal = beta;
         int bound = 0;
-        if (alreadyEvaluated.keySet().size() > 0) {
-            int[] out = alreadyEvaluated.get(Main.cast(position));
-            if(out != null && out[3] >= depth) {
-                if (out[4] == 0) {
-                    return new int[]{out[0], out[1], out[2]};
+        int neededIndex = getIndex(position);
+        if (neededIndex != -1) {
+            int cachedEvaluation = evals[neededIndex];
+            int cachedDepth = otherInfo[neededIndex][2];
+            int cachedBound = otherInfo[neededIndex][3];
+            if (cachedDepth >= depth) {
+                if (cachedBound == 0) {
+                    return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
                 }
-                if (out[4] == -1) {
-                    if (out[0] >= beta) return new int[]{out[0], out[1], out[2]};
-                    alpha = Math.max(alpha, out[0]); 
+                if (cachedBound == -1) {
+                    if (cachedEvaluation >= beta) return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
+                    alpha = Math.max(alpha, cachedEvaluation);
                 }
-                if (out[4] == 1) {
-                    if (out[0] <= alpha) return new int[]{out[0], out[1], out[2]};
-                    beta = Math.min(beta, out[0]);
+                if (cachedBound == 1) {
+                    if (cachedEvaluation <= alpha) return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
+                    beta = Math.min(beta, cachedEvaluation);
                 }
                 if (alpha >= beta) {
-                    return new int[]{out[0], out[1], out[2]};
+                    return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
                 }
             }
         }
@@ -1650,14 +1427,14 @@ class Position {
         }
         byte[][] moves = sortMoves(unorderedMoves);
         if (depth == 0) {
-            return new int[]{evalQ(moves, alpha, beta), 0, 0};
+            return new int[]{evalQ(moves, alpha, beta, true), 0, 0};
         }
         int evaluation = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
         int bestStart = 0;
         int bestEnd = 0;
-        int evalStatic = currentCount(false)/*count(false)*/;
+        //int evalStatic = currentCount(false);
         for (int i = 0; i < moves[0].length; i++) {
-            if (depth == 1 && !isTacticalMove(moves[0][i], moves[1][i]) && !inCheck()) {
+            /*if (depth == 1 && !isTacticalMove(moves[0][i], moves[1][i]) && !inCheck()) {
                 //futility pruning
                 if ((maximizing && evalStatic + 50 < alpha) || (!maximizing && evalStatic - 50 > beta)) {
                     pruneHistory.add(moves[0][i] * 100 + moves[1][i]);
@@ -1668,7 +1445,7 @@ class Position {
                     pruneHistory.add(moves[0][i] * 100 + moves[1][i]);
                     return new int[]{(maximizing) ? beta : alpha, moves[0][0], moves[1][0]};
                 }
-            }
+            }*/
             boolean nodeInCheck = inCheck();
             boolean reduce = depth > 2 && i >= 3 && !isTacticalMove(moves[0][i], moves[1][i]) && !inCheck(); 
             makeMove(moves[0][i], moves[1][i]); //color to move is now flipped
@@ -1686,8 +1463,6 @@ class Position {
             } finally {
                 restore();
             }
-            alreadyEvaluated.put(Main.cast(position), new int[]{evaluation, bestStart, bestEnd, depth, bound});
-            bound = evaluation <= alphaOriginal ? 1 : evaluation >= betaOriginal ? -1 : 0;
             if (maximizing) {
                 if (potential > evaluation) {
                     evaluation = potential;
@@ -1715,10 +1490,13 @@ class Position {
                 throw new TimeExceededException();
             }
         }
+        bound = evaluation <= alphaOriginal ? 1 : evaluation >= betaOriginal ? -1 : 0;
+        store(position, evaluation, bestStart, bestEnd, depth, bound);
         return new int[]{evaluation, bestStart, bestEnd};
     }
 }
 class Reference {
+    static final int length = 1000;
     static final Map<Integer, Integer> knightBonus = Map.ofEntries(
         Map.entry(1, -25), Map.entry(2, -20), Map.entry(3, -15), Map.entry(4, -15), Map.entry(5, -15), Map.entry(6, -15), Map.entry(7, -20), Map.entry(8, -25),
         Map.entry(9, -20), Map.entry(10, -20), Map.entry(11, -15), Map.entry(12, -10), Map.entry(13, -10), Map.entry(14, -15), Map.entry(15, -20), Map.entry(16, -20),
