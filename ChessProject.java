@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import java.util.Scanner;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -1591,7 +1590,6 @@ class GameEndsException extends Exception {
     GameEndsException(int status) {
         super(Integer.toString(status));
     }
-=======
 import java.util.Scanner;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -3184,5 +3182,4 @@ class GameEndsException extends Exception {
     GameEndsException(int status) {
         super(Integer.toString(status));
     }
->>>>>>> c8f5262137995cb152e7cefdc57b88eafd37d0a2
 }
