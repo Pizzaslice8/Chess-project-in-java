@@ -9,8 +9,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Iterator;
-import java.util.function.Runnable;
 import java.util.function.Predicate;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -22,14 +22,6 @@ public class ChessProject {
         /*
         PASTE INTO TERMINAL:
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\ChessProject.java"
-
-        TO DO:
-        1. update(i) in evalQ()
-        2. Fix undoStack so it doesn't just continually copy state arrays
-        3. replace byte[72] with bitboards (long[12], etc) and do BITWISE!
-        3. replace attack maps, vision, with bitboards, precomputed attack maps
-        4. Use this for ultra-efficient legal move generation
-
         */
         try {
             run();
@@ -37,12 +29,9 @@ public class ChessProject {
             System.out.println("\nInterrupt");
         } catch (GameAlreadyOverException g) {
             String message = switch (g.getMessage()) {
-                case "1":
-                    yield "Checkmate white wins";
-                case "2":
-                    yield "Checkmate black wins";
-                default:
-                    yield "Draw";
+                case "1": yield "Checkmate white wins";
+                case "2": yield "Checkmate black wins";
+                default: yield "Draw";
             };
             printRed("Game already over:");
             System.out.println(message);
@@ -261,51 +250,51 @@ public class ChessProject {
         return square + x + 8 * y;
     }
     static int getId(char piece) {
-        return switch (piece) {
-            case 'K' -> 1;
-            case 'k' -> 2;
-            case 'Q' -> 3;
-            case 'q' -> 4;
-            case 'R' -> 5;
-            case 'r' -> 6;
-            case 'B' -> 7;
-            case 'b' -> 8;
-            case 'N' -> 9;
-            case 'n' -> 10;
-            case 'P' -> 11;
-            case 'p' -> 12;
-            default -> 0;
-        };
+        switch (piece) {
+            case 'K': return 1;
+            case 'k': return 2;
+            case 'Q': return 3;
+            case 'q': return 4;
+            case 'R': return 5;
+            case 'r': return 6;
+            case 'B': return 7;
+            case 'b': return 8;
+            case 'N': return 9;
+            case 'n': return 10;
+            case 'P': return 11;
+            case 'p': return 12;
+            default: return 0;
+        }
     }
     static char getChar(int piece) {
-        return switch (piece) {
-            case 1 -> 'K';
-            case 2 -> 'k';
-            case 3 -> 'Q';
-            case 4 -> 'q';
-            case 5 -> 'R';
-            case 6 -> 'r';
-            case 7 -> 'B';
-            case 8 -> 'b';
-            case 9 -> 'N';
-            case 10 -> 'n';
-            case 11 -> 'P';
-            case 12 -> 'p';
-            default -> '0';
-        };
+        switch (piece) {
+            case 1: return 'K';
+            case 2: return 'k';
+            case 3: return 'Q';
+            case 4: return 'q';
+            case 5: return 'R';
+            case 6: return 'r';
+            case 7: return 'B';
+            case 8: return 'b';
+            case 9: return 'N';
+            case 10: return 'n';
+            case 11: return 'P';
+            case 12: return 'p';
+            default: return '0';
+        }
     }
     static int materialWorth(int piece) {
-        return switch (piece) {
-            case 3 -> 90;
-            case 4 -> -90;
-            case 5 -> 50;
-            case 6 -> -50;
-            case 7, 9 -> 30;
-            case 8, 10 -> -30;
-            case 11 -> 10;
-            case 12 -> -10;
-            default -> 0;
-        };
+        switch (piece) {
+            case 3: return 90;
+            case 4: return -90;
+            case 5: return 50;
+            case 6: return -50;
+            case 7: case 9: return 30;
+            case 8: case 10: return -30;
+            case 11: return 10;
+            case 12: return -10;
+            default: return 0;
+        }
     }
     static List<Integer> cast(int[] input) {
         return Arrays.stream(input).boxed().toList();
@@ -320,18 +309,10 @@ public class ChessProject {
     static boolean color(int piece) {
         return (piece % 2) == 1;
     }
-    static int[] extract(long bits) {
-        int[] output = new int[Long.bitCount(bits)];
-        int index = 0;
-        while (bits != 0) {
-            output[index++] = Long.numberOfTrailingZeros(bits);
-            bits &= (bits-1);
-        }
-        return output;
-    }
 }
 class Position {
     int[] position; //can't use byte[] because arithmetic operations will be performed
+    long[] pieceBoard = new long[12];
     int limit, maxDepth;
     int[][] undoStack = new int[50][72];
     int undoDeep = 0; 
@@ -416,11 +397,11 @@ class Position {
     int currentCount(boolean checkStatus) {
         if (checkStatus) {
             try {gameStatus();} catch (GameEndsException g) {
-                return switch (g.getMessage()) {
-                    case "1" -> Integer.MAX_VALUE;
-                    case "2" -> Integer.MIN_VALUE;
-                    default -> 0;
-                };
+                switch (g.getMessage()) {
+                    case "1": return Integer.MAX_VALUE;
+                    case "2": return Integer.MIN_VALUE;
+                    default: return 0;
+                }
             }
         }
         int output = 0;
@@ -438,14 +419,13 @@ class Position {
         space[square-1] = 0;
         rooksSeventh[square-1] = 0;
         outposts[square-1] = 0;
-        vision(square);
         int piece = getPiece(square);
         if (piece == 0) return;
         int modifier = (ChessProject.color(piece)) ? 1 : -1;
         int sameColorPawn = (23 - modifier) / 2;
-        byte[] pieceVision = retrieve(0);
-        for (byte s : pieceVision) {
-            if (s == 28 || s == 29 || s == 36 || s == 37) {
+        int[] pieceVision = Reference.unserialize(Reference.getBitboard(square-1, position, piece));
+        for (int s : pieceVision) {
+            if (s == 27 || s == 28 || s == 35 || s == 36) {
                 centralControl[square-1] = (byte) (centralControl[square-1] + 2 * modifier);
             }
         }
@@ -513,9 +493,9 @@ class Position {
             int equivalent = (piece == 11) ? ChessProject.getY(square) : 9 - ChessProject.getY(square);
             double addition = switch (ChessProject.getX(square)) {
                 // central space is worth more
-                case 3, 6 -> Math.pow(equivalent, 2) / 9.0; // c and f files
-                case 4, 5 -> Math.pow(equivalent, 2) / 7.0; // center files: d and e
-                default -> Math.pow(equivalent, 2) / 12.0; //flank files, a, b, g, h
+                case 3: case 6: yield Math.pow(equivalent, 2) / 9.0; // c and f files
+                case 4: case 5: yield Math.pow(equivalent, 2) / 7.0; // center files: d and e
+                default: yield Math.pow(equivalent, 2) / 12.0; //flank files, a, b, g, h
             };
             space[square-1] = (byte) Math.round(modifier * addition);
         }
@@ -524,8 +504,13 @@ class Position {
         this.position = setup;
         this.limit = timeLimit;
         this.maxDepth = depth;
-        for (int i = 1; i <= 64; i++) {
-            update(i);
+        Reference.initializeNonmagic();
+        Reference.initializeMagic();
+        for (int i = 0; i < 64; i++) {
+            if (setup[i] != 0) {
+                pieceBoard[setup[i] - 1] |= (1L << i);
+            }
+            update(i+1);
         }
     }
     int numberOfPieces() {
@@ -551,7 +536,14 @@ class Position {
                 return i+1;
             }
         }
-        return 0; //HOPEFULLY this never happens
+        //HOPEFULLY this never happens
+        String message = "Looking for " + ((position[64] == 1) ? "white" : "black") + " king but found none\nThis is the current position:\n";
+        for (int i = 0; i < 64; i++) {
+            message += Integer.toString(position[i]);
+            if (i % 8 == 7) message += "\n";
+            else message += " ";
+        }
+        throw new RuntimeException(message);
     }
     void display() {
         for (int i = 7; i >= 0; i--) {
@@ -615,7 +607,7 @@ class Position {
             }
         }
     }
-    void vision(int square) {
+    /*void vision(int square) {
         clearPad(0);
         int piece = getPiece(square);
         boolean color = ChessProject.color(piece);
@@ -762,9 +754,8 @@ class Position {
             default:
                 break;
         }
-    }
+    }*/
     void legalMovesBasic(int square) {
-        clearPad(0);
         int piece = getPiece(square);
         boolean color = ChessProject.color(piece);
         int index = 0;
@@ -823,7 +814,13 @@ class Position {
                 index++;
             }
         } else {
-            vision(square);
+            int[] squares = Reference.unserialize(Reference.getBitboard(square-1, position, piece));
+            for (int s : squares) {
+                if (position[s] == 0 || (ChessProject.color(position[s]) != color)) {
+                    pad[0][index] = (byte) (s + 1);
+                    index++;
+                }
+            }
         }
     }
     void makeMove(int start, int end) {
@@ -844,12 +841,15 @@ class Position {
             if (end == 8 && captured == 5) position[65] = 0;
             if (end == 57 && captured == 6) position[68] = 0;
             if (end == 64 && captured == 6) position[67] = 0;
+            pieceBoard[captured-1] ^= (1L << (end - 1));
         }
         if (position[64] == 0) {
             position[71] = position[71] + 1;
         }
         position[end-1] = piece;
         position[start-1] = 0;
+        pieceBoard[piece-1] |= (1L << (end - 1));
+        pieceBoard[piece-1] ^= (1L << (start - 1));
         switch (piece) {
             case 1:
                 position[65] = 0;
@@ -858,11 +858,15 @@ class Position {
                     //white castle long
                     position[0] = 0;
                     position[3] = 5;
+                    pieceBoard[4] |= (1L << 3);
+                    pieceBoard[4] ^= 1L;
                 }
                 if (end == 7) {
                     //white castle short
                     position[7] = 0;
                     position[5] = 5;
+                    pieceBoard[4] |= (1L << 5);
+                    pieceBoard[4] ^= (1L << 7);
                 }
                 break;
             case 2:
@@ -872,11 +876,15 @@ class Position {
                     //black castle long
                     position[56] = 0;
                     position[59] = 6;
+                    pieceBoard[5] |= (1L << 59);
+                    pieceBoard[5] ^= (1L << 56);
                 }
                 if (end == 63) {
                     //black castle short
                     position[63] = 0;
                     position[61] = 6;
+                    pieceBoard[5] |= (1L << 61);
+                    pieceBoard[5] ^= (1L << 63);
                 }
                 break;
             case 5:
@@ -902,7 +910,9 @@ class Position {
                 //worry about en passant and promotion, assume all promotions go to queens
                 if (end == position[69]) {
                     //en passant!
-                    position[ChessProject.translate(end, 0, -1) - 1] = 0;
+                    int squareid = ChessProject.translate(end, 0, -1) - 1;
+                    pieceBoard[11] ^= (1L << squareid);
+                    position[squareid] = 0;
                 }
                 position[69] = 0;
                 if (start > 8 && start <= 16 && end > 24 && end <= 32) {
@@ -914,6 +924,8 @@ class Position {
                 if (start > 48 && start <= 56) {
                     //promotion
                     position[end-1] = 3;
+                    pieceBoard[10] ^= (1L << end-1);
+                    pieceBoard[2] |= (1L << end-1);
                 }
                 position[70] = 0;
                 break;
@@ -921,7 +933,9 @@ class Position {
                 //black pawn
                 if (end == position[69]) {
                     //en passant!
-                    position[ChessProject.translate(end, 0, 1) - 1] = 0;
+                    int squareid = ChessProject.translate(end, 0, 1) - 1;
+                    pieceBoard[10] ^= (1L << squareid);
+                    position[squareid] = 0;
                 }
                 position[69] = 0;
                 if (start > 48 && start <= 56 && end > 32 && end <= 40) {
@@ -933,6 +947,8 @@ class Position {
                 if (start > 8 && start <= 16) {
                     //promotion
                     position[end-1] = 4;
+                    pieceBoard[11] ^= (1L << end-1);
+                    pieceBoard[3] |= (1L << end-1);
                 }
                 position[70] = 0;
                 break;
@@ -944,9 +960,16 @@ class Position {
     void restore() {
         undoDeep--;
         int[] previousPosition = (undoDeep >= 0) ? undoStack[undoDeep] : new int[72]; //safeguard, shouldn't ever happen
+        for (int i = 0; i < 12; i++) {
+            pieceBoard[i] = 0L;
+        }
         for (int i = 0; i < 72; i++) {
             position[i] = previousPosition[i];
             undoStack[undoDeep][i] = 0;
+            if (i >= 64) continue;
+            if (position[i] != 0) {
+                pieceBoard[position[i] - 1] |= (1L << i);
+            }
         }
     }
     byte[] legalMoves(int square) {
@@ -971,18 +994,19 @@ class Position {
                     boolean allowed = true;
                     position[4] = 0;
                     position[5] = 1;
+                    pieceBoard[0] = (1L << 5);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[5] = 0;
-                    position[4] = 1;
-                    position[4] = 0;
                     position[6] = 1;
+                    pieceBoard[0] = (1L << 6);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[6] = 0;
                     position[4] = 1;
+                    pieceBoard[0] = (1L << 4);
                     if (allowed) {
                         pad[8][i] = 7;
                         i++;
@@ -992,18 +1016,19 @@ class Position {
                     boolean allowed = true; 
                     position[4] = 0;
                     position[3] = 1;
+                    pieceBoard[0] = (1L << 3);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[3] = 0;
-                    position[4] = 1;
-                    position[4] = 0;
                     position[2] = 1;
+                    pieceBoard[0] = (1L << 2);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[2] = 0;
                     position[4] = 1;
+                    pieceBoard[0] = (1L << 4);
                     if (allowed) {
                         pad[8][i] = 3;
                         i++;
@@ -1015,18 +1040,19 @@ class Position {
                     boolean allowed = true;
                     position[60] = 0;
                     position[61] = 2;
+                    pieceBoard[1] = (1L << 61);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[61] = 0;
-                    position[60] = 2;
-                    position[60] = 0;
                     position[62] = 2;
+                    pieceBoard[1] = (1L << 62);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[62] = 0;
                     position[60] = 2;
+                    pieceBoard[1] = (1L << 60);
                     if (allowed) {
                         pad[8][i] = 63;
                         i++;
@@ -1036,18 +1062,19 @@ class Position {
                     boolean allowed = true; 
                     position[60] = 0;
                     position[59] = 2;
+                    pieceBoard[1] = (1L << 59);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[59] = 0;
-                    position[60] = 2;
-                    position[60] = 0;
                     position[58] = 2;
+                    pieceBoard[1] = (1L << 58);
                     if (inCheck()) {
                         allowed = false;
                     }
                     position[58] = 0;
                     position[60] = 2;
+                    pieceBoard[1] = (1L << 60);
                     if (allowed) {
                         pad[8][i] = 59;
                         i++;
@@ -1058,33 +1085,22 @@ class Position {
         return retrieve(8);
     }
     boolean inCheck() {
-        int king = kingSquare();
-        byte modified = (byte) king;
-        byte[] squareMap = attackMap(1 - position[64]);
-        for (byte square : squareMap) {
-            if (square == king) {
-                return true;
-            }
-        }
-        return false;
-    }
-    byte[] attackMap(int color) {
-        //1 = white, 0 = black
-        clearPad(7);
-        int i = 0;
-        for (int j = 0; j < 64; j++) {
-            if (position[j] != 0) {
-                if ((color == 1 && ChessProject.color(position[j])) || (color == 0 && !ChessProject.color(position[j]))) {
-                    vision(j+1);
-                    byte[] additions = retrieve(0);
-                    for (byte b : additions) {
-                        pad[7][i] = b;
-                        i++;
-                    }
-                }
-            }
-        }
-        return retrieve(7);
+        int king = kingSquare() - 1;
+        return (position[64] == 1) ? (
+            //test black pieces
+            (Reference.getBitboard(king, position, 2) & pieceBoard[1]) != 0 ||
+            (Reference.getBitboard(king, position, 6) & (pieceBoard[5] | pieceBoard[3])) != 0 ||
+            (Reference.getBitboard(king, position, 8) & (pieceBoard[7] | pieceBoard[3])) != 0 ||
+            (Reference.getBitboard(king, position, 10) & pieceBoard[9]) != 0 ||
+            (Reference.getBitboard(king, position, 11) & pieceBoard[11]) != 0
+        ) : (
+            //test white pieces
+            (Reference.getBitboard(king, position, 1) & pieceBoard[0]) != 0 ||
+            (Reference.getBitboard(king, position, 5) & (pieceBoard[4] | pieceBoard[2])) != 0 ||
+            (Reference.getBitboard(king, position, 7) & (pieceBoard[6] | pieceBoard[2])) != 0 ||
+            (Reference.getBitboard(king, position, 9) & pieceBoard[8]) != 0 ||
+            (Reference.getBitboard(king, position, 12) & pieceBoard[10]) != 0
+        );
     }
     byte[][] generateMoves() {
         clearPad(5);
@@ -1430,11 +1446,11 @@ class Position {
         }
         byte[][] unorderedMoves = generateMoves();
         try {gameStatus(unorderedMoves);} catch (GameEndsException g) {
-            return switch (g.getMessage()) {
-                case "1" -> new int[]{Integer.MAX_VALUE, 0, 0};
-                case "2" -> new int[]{Integer.MIN_VALUE, 0, 0};
-                default -> new int[3];
-            };
+            switch (g.getMessage()) {
+                case "1": return new int[]{Integer.MAX_VALUE, 0, 0};
+                case "2": return new int[]{Integer.MIN_VALUE, 0, 0};
+                default: return new int[3];
+            }
         }
         byte[][] moves = sortMoves(unorderedMoves);
         if (depth == 0) {
@@ -1499,124 +1515,6 @@ class Reference {
     static final byte[] knightBonus = {-25, -20, -15, -15, -15, -15, -20, -25, -20, -20, -15, -10, -10, -15, -20, -20,
     -10, 0, 10, 10, 10, 10, 0, -10, -5, 0, 10, 10, 10, 10, 0, -5, 0, 5, 15, 20, 20, 20, 5, 0, -10, 0, 10, 15, 15, 10, 0, -10,
     -15, -15, -10, -10, -10, -10, -15, -15, -25, -25, -20, -20, -20, -20, -25, -25};
-    //attack map bitboards
-    static final long[] whitePawnVision = new long[64], blackPawnVision = new long[64],
-    knightVision = new long[64], kingVision = new long[64];
-    private static boolean inBounds(int square, int addX, int addY) {
-        int squareX = square % 8;
-        int squareY = (square - squareX) / 8;
-        return (squareX + addX >= 0 && squareX + addX < 8 && squareY + addY >= 0 && squareY + addY < 8);
-    }
-    private static boolean squareBetween(int target, int topBound, int bottomBound) {
-        if (topBound < 0 || bottomBound < 0) return false;
-        int topX = topBound % 8;
-        int topY = (topBound - topX) / 8;
-        int bottomX = bottomBound % 8;
-        int bottomY = (bottomBound - bottomX) / 8;
-        if (Math.abs(topX - bottomX) < 2 || Math.abs(topY - bottomY) < 2) return false;
-        int targetX = target % 8;
-        int targetY = (target - targetX) / 8;
-        boolean withinX = (Math.max(topX, bottomX) > targetX && Math.min(topX, bottomX) < targetX);
-        boolean withinY = (Math.max(topY, bottomY) > targetY && Math.min(topY, bottomY) < targetY);
-        boolean onLine = (Math.abs(topX - targetX) == Math.abs(topY - targetY) && Math.abs(bottomX - targetX) == Math.abs(bottomY - targetY));
-        return (withinX && withinY && onLine);
-    }
-    static void addConditional(long[] where, int square, int addX, int addY) {
-        if (isBishop && isRook) throw new IllegalArgumentException();
-        //tried to add square to where, if successful, return true, if unsuccessful, return false
-        int squareX = square % 8;
-        int squareY = (square - squareX) / 8;
-        if (inBounds(square, addX, addY)) {
-            where[square] |= (1L << addition);
-        }
-    }
-    static void initializeNonmagic() {
-        for (int i = 0; i < 64; i++) {
-            //pawns
-            addConditional(whitePawnVision, i, 1, 1);
-            addConditional(whitePawnVision, i, -1, 1);
-            addConditional(blackPawnVision, i, 1, -1);
-            addConditional(blackPawnVision, i, -1, -1);
-            //knights
-            addConditional(knightVision, i, 1, 2);
-            addConditional(knightVision, i, -1, 2);
-            addConditional(knightVision, i, 1, -2);
-            addConditional(knightVision, i, -1, -2);
-            addConditional(knightVision, i, 2, 1);
-            addConditional(knightVision, i, -2, 1);
-            addConditional(knightVision, i, 2, -1);
-            addConditional(knightVision, i, -2, -1);
-            //kings
-            addConditional(kingVision, i, 1, 0);
-            addConditional(kingVision, i, 0, 1);
-            addConditional(kingVision, i, 1, 1);
-            addConditional(kingVision, i, -1, 0);
-            addConditional(kingVision, i, 0, -1);
-            addConditional(kingVision, i, 1, -1);
-            addConditional(kingVision, i, -1, 1);
-            addConditional(kingVision, i, -1, -1);
-        }
-    }
-    //attack map magic bitboards
-    static final 
-    static final long[] bishopVision = new long[1428];
-    static final long[] rookVision = new long[4900];
-    private static final int[] occupanciesBishop = {
-        7,  6,  10, 12,  12,  10, 6,  7,
-        6,  6,  10, 12,  12,  10, 6,  6,
-        10, 10, 40, 48,  48,  40, 10, 10,
-        12, 12, 48, 108, 108, 48, 12, 12,
-        12, 12, 48, 108, 108, 48, 12, 12,
-        10, 10, 40, 48,  48,  40, 10, 10,
-        6,  6,  10, 12,  12,  10, 6,  6,
-        7,  6,  10, 12,  12,  10, 6,  7
-    };
-    private static final int[] occupanciesRook = {
-        49, 42, 70,  84,  84,  70,  42, 49,
-        42, 36, 60,  72,  72,  60,  36, 42,
-        70, 60, 100, 120, 120, 100, 60, 70,
-        84, 72, 120, 144, 144, 120, 72, 84,
-        84, 72, 120, 144, 144, 120, 72, 84,
-        70, 60, 100, 120, 120, 100, 60, 70,
-        42, 36, 60,  72,  72,  60,  36, 42,
-        49, 42, 70,  84,  84,  70,  42, 49
-    };
-    private static int[] spaces(int square, int dx, int dy) {
-        long output = 0L;
-        int x = square % 8;
-        int y = (square - x) / 8;
-        while (x > 0 && x < 7 && y > 0 && y < 7) {
-            x += dx;
-            y += dy;
-            output |= (1L << (8 * y + x));
-        }
-        return unserialize(output);
-    }
-    static void initializeMagic() {
-        //long[] where, int square, int addX, int addY, int index, boolean isBishop, boolean isRook
-        for (int i = 0; i < 64; i++) {
-            
-        }
-    }
-    static long serialize(int[] squares) {
-        long output = 0L;
-        for (int square : squares) {
-            output |= (1L << addition);
-        }
-        return output;
-    }
-    static int[] unserialize(long bitboard) {
-        int[] output = new int[Long.bitCount(bitboard)];
-        int i = 0;
-        for (int j = 0; j < output.length; j++) {
-            while (bitboard % 2 == 0) {
-                bitboard >>= 1;
-                i++;
-            }
-            output[j] = i;
-        }
-        return output;
-    }
     static final Map<String, String> openings = Map.ofEntries(
         //0ply
         Map.entry("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "Depth 2147483647\nEvaluation: 0.2\nBest move: e2e4"), // starting position
@@ -1696,6 +1594,247 @@ class Reference {
         //5ply, d4 d5 c4 e6 
         Map.entry("rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 1 3", "Depth 2147483647\nEvaluation: 0.2\nBest move: g8f6") // d4 d5 c4 e6 Nc3
     );
+    private static double distance(int square1, int square2) {
+        int x1 = square1 % 8;
+        int y1 = (square1 - x1) / 8;
+        int x2 = square2 % 8;
+        int y2 = (square2 - x2) / 8;
+        return Math.hypot(x2 - x1, y2 - y1);
+    }
+    //bitboards
+    private static final int[] bishopDx = {1, 1, -1, -1};
+    private static final int[] bishopDy = {-1, 1, 1, -1};
+    private static final int[] rookDx = {1, 0, -1, 0};
+    private static final int[] rookDy = {0, 1, 0, -1};
+    private static final long[] whitePawnVision = new long[64], blackPawnVision = new long[64],
+    knightVision = new long[64], kingVision = new long[64];
+    private static long serialize(int[] squares) {
+        long output = 0L;
+        for (int square : squares) {
+            output |= (1L << square);
+        }
+        return output;
+    }
+    private static long serializeAll(int[][] squareSet) {
+        long output = 0L;
+        for (int[] squares : squareSet) {
+            output |= serialize(squares);
+        }
+        return output;
+    }
+    static int[] unserialize(long bitboard) {
+        int[] output = new int[Long.bitCount(bitboard)];
+        int i = 0;
+        while (bitboard != 0) {
+            output[i++] = Long.numberOfTrailingZeros(bitboard);
+            bitboard &= (bitboard-1);
+        }
+        return output;
+    }
+    private static int[][] unserializeMultiple(long[] bitboards) {
+        return new int[][]{unserialize(bitboards[0]), unserialize(bitboards[1]), unserialize(bitboards[2]), unserialize(bitboards[3])};
+    }
+    private static void addConditional(long[] where, int square, int addX, int addY) {
+        //tried to add square to where, if successful, return true, if unsuccessful, return false
+        int squareX = square % 8;
+        int squareY = (square - squareX) / 8;
+        squareX += addX;
+        squareY += addY;
+        if (squareX >= 0 && squareX < 8 && squareY >= 0 && squareY < 8) {
+            where[square] |= (1L << (squareY * 8 + squareX));
+        }
+    }
+    static void initializeNonmagic() {
+        for (int i = 0; i < 64; i++) {
+            //pawns
+            addConditional(whitePawnVision, i, 1, 1);
+            addConditional(whitePawnVision, i, -1, 1);
+            addConditional(blackPawnVision, i, 1, -1);
+            addConditional(blackPawnVision, i, -1, -1);
+            //knights
+            addConditional(knightVision, i, 1, 2);
+            addConditional(knightVision, i, -1, 2);
+            addConditional(knightVision, i, 1, -2);
+            addConditional(knightVision, i, -1, -2);
+            addConditional(knightVision, i, 2, 1);
+            addConditional(knightVision, i, -2, 1);
+            addConditional(knightVision, i, 2, -1);
+            addConditional(knightVision, i, -2, -1);
+            //kings
+            addConditional(kingVision, i, 1, 0);
+            addConditional(kingVision, i, 0, 1);
+            addConditional(kingVision, i, 1, 1);
+            addConditional(kingVision, i, -1, 0);
+            addConditional(kingVision, i, 0, -1);
+            addConditional(kingVision, i, 1, -1);
+            addConditional(kingVision, i, -1, 1);
+            addConditional(kingVision, i, -1, -1);
+        }
+    }
+    //attack map magic bitboards
+    static Map<Long, Long> bishopBitboards = new HashMap<>();
+    static Map<Long, Long> rookBitboards = new HashMap<>();
+    private static int[][] spaces(int square, int[] allPieces, int[] dx, int[] dy) {
+        //includes current square
+        long[] output = {0L, 0L, 0L, 0L};
+        int x, y;
+        for (int i = 0; i < 4; i++) {
+            x = square % 8;
+            y = (square - x) / 8;
+            int currentSquare;
+            do {
+                currentSquare = 8 * y + x;
+                output[i] |= (1L << currentSquare);
+                x += dx[i];
+                y += dy[i];
+                boolean stop = false;
+                for (int piece : allPieces) {
+                    if (piece == currentSquare) {
+                        stop = true;
+                        break;
+                    }
+                }
+                if (stop) break;
+            } while (x >= 0 && x < 8 && y >= 0 && y < 8);
+        }
+        return unserializeMultiple(output);
+    }
+    static void initializeMagic() {
+        for (int i = 0; i < 64; i++) {
+            int[][] bishopEverything = spaces(i, new int[0], bishopDx, bishopDy);
+            int[][] rookEverything = spaces(i, new int[0], rookDx, rookDy);
+            int[] addition = {0, 0, 0, 0};
+            for (int se : bishopEverything[0]) {
+                for (int ne : bishopEverything[1]) {
+                    for (int nw : bishopEverything[2]) {
+                        for (int sw : bishopEverything[3]) {
+                            addition[0] = se;
+                            addition[1] = ne;
+                            addition[2] = nw;
+                            addition[3] = sw;
+                            bishopBitboards.put(serialize(addition) | (1L << i), serializeAll(spaces(i, addition, bishopDx, bishopDy))); 
+                        }
+                    }
+                }
+            }
+            for (int e : rookEverything[0]) {
+                for (int n : rookEverything[1]) {
+                    for (int w : rookEverything[2]) {
+                        for (int s : rookEverything[3]) {
+                            addition[0] = e;
+                            addition[1] = n;
+                            addition[2] = w;
+                            addition[3] = s;
+                            rookBitboards.put(serialize(addition) | (1L << i), serializeAll(spaces(i, addition, rookDx, rookDy)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    static long getBitboard(int square, int[] board, int piece) {
+        if (piece == 3) return getBitboard(square, board, 5) | getBitboard(square, board, 7);
+        if (piece == 4) return getBitboard(square, board, 6) | getBitboard(square, board, 8);
+        final int refX = square % 8;
+        final int refY = (square - refX) / 8;
+        long input = 1L << square;
+        long allPieces = 0L;
+        for (int i = 0; i < 64; i++) {
+            if (board[i] != 0) {
+                allPieces |= (1L << i);
+            }
+        }
+        if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
+            int[] fullSpaces = unserialize(switch (piece) {
+                case 5: case 6: yield serializeAll(spaces(square, new int[0], rookDx, rookDy)) & allPieces;
+                case 7: case 8: yield serializeAll(spaces(square, new int[0], bishopDx, bishopDy)) & allPieces;
+                default: yield 0L;
+            });
+
+            long bits1 = 0L, bits2 = 0L, bits3 = 0L, bits4 = 0L;
+            for (int space : fullSpaces) {
+                int x = space % 8;
+                int y = (space - x) / 8;
+                if (piece == 5 || piece == 6) {
+                    if (x > refX) bits1 |= (1L << space);
+                    if (y > refY) bits2 |= (1L << space);
+                    if (x < refX) bits3 |= (1L << space);
+                    if (y < refY) bits4 |= (1L << space);
+                }
+                if (piece == 7 || piece == 8) {
+                    if (x > refX) {
+                        if (y < refY) {
+                            bits1 |= (1L << space);
+                        } if (y > refY) {
+                            bits2 |= (1L << space);
+                        }
+                    } if (x < refX) {
+                        if (y > refY) {
+                            bits3 |= (1L << space);
+                        } if (y < refY) {
+                            bits4 |= (1L << space);
+                        }
+                    }
+                }
+            }
+            int[] dir1 = unserialize(bits1), dir2 = unserialize(bits2), dir3 = unserialize(bits3), dir4 = unserialize(bits4);
+            int[] closest = {1000, 1000, 1000, 1000}; //can't use {0, 0, 0, 0} because we're using Math.min()
+            for (int s1 : dir1) {
+                closest[0] = Math.min(closest[0], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s1) / 1.41421 : distance(square, s1)));
+            }
+            for (int s2 : dir2) {
+                closest[1] = Math.min(closest[1], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s2) / 1.41421 : distance(square, s2)));
+            }
+            for (int s3 : dir3) {
+                closest[2] = Math.min(closest[2], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s3) / 1.41421 : distance(square, s3)));
+            }
+            for (int s4 : dir4) {
+                closest[3] = Math.min(closest[3], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s4) / 1.41421 : distance(square, s4)));
+            }
+            int[] additions = new int[4];
+            additions[0] = (piece == 7 || piece == 8) ? (refX + closest[0]) + 8 * (refY - closest[0]) : (refX + closest[0]) + 8 * refY;
+            additions[1] = (piece == 7 || piece == 8) ? (refX + closest[1]) + 8 * (refY + closest[1]) : refX + 8 * (refY + closest[1]);
+            additions[2] = (piece == 7 || piece == 8) ? (refX - closest[2]) + 8 * (refY + closest[2]) : (refX - closest[2]) + 8 * refY;
+            additions[3] = (piece == 7 || piece == 8) ? (refX - closest[3]) + 8 * (refY - closest[3]) : refX + 8 * (refY - closest[3]);
+            for (int a : additions) {
+                if (a >= 0 && a <= 63) {
+                    input |= (1L << a);
+                }
+            }
+        }
+        long output = switch (piece) {
+            case 1: case 2: yield kingVision[square];
+            case 5: case 6:
+                if (rookBitboards.containsKey(input)) {
+                    yield rookBitboards.get(input).longValue();
+                } else {
+                    System.out.print("rook");
+                    System.out.print(" ");
+                    for (int i : unserialize(input)) {
+                        System.out.print(i);
+                        System.out.print(" ");
+                    }
+                    throw new RuntimeException();
+                }
+            case 7: case 8:
+                if (bishopBitboards.containsKey(input)) {
+                    yield bishopBitboards.get(input).longValue();
+                } else {
+                    System.out.print("bishop");
+                    System.out.print(" ");
+                    for (int i : unserialize(input)) {
+                        System.out.print(i);
+                        System.out.print(" ");
+                    }
+                    throw new RuntimeException();
+                }
+            case 9: case 10: yield knightVision[square];
+            case 11: yield whitePawnVision[square];
+            case 12: yield blackPawnVision[square];
+            default: yield 0L;
+        };
+        return output;
+    }
 }
 class TimeExceededException extends Exception {
     TimeExceededException() {
