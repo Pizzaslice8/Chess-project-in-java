@@ -1,20 +1,14 @@
 import java.util.Scanner;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.concurrent.TimeUnit;
 import java.util.NoSuchElementException;
-import java.util.Collections;
-import java.util.List;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.function.Predicate;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.List;
+import java.util.ArrayList;
 import java.lang.Math;
 
 public class ChessProject {
@@ -59,8 +53,12 @@ public class ChessProject {
         System.out.print("\n");
     }
     static void run() throws GameAlreadyOverException, InvalidFENException {
+        System.out.print("Initializing... ");
+        Reference.initialize();
         Scanner scanner = new Scanner(System.in);
         int[] setup = new int[72];
+        System.out.println("done");
+        try {Thread.sleep(500);} catch (InterruptedException ie) {}
         System.out.print("FEN: ");
         String fen = scanner.nextLine();
         if (Reference.openings.containsKey(fen)) {
@@ -160,6 +158,7 @@ public class ChessProject {
         int timeLimit = scanner.nextInt();
         Position pos = new Position(setup, timeLimit * 1000, depth);
         pos.display();
+        pos.displayStats();
         try {
             pos.gameStatus();
         } catch (GameEndsException status) {
@@ -296,9 +295,6 @@ public class ChessProject {
             default: return 0;
         }
     }
-    static List<Integer> cast(int[] input) {
-        return Arrays.stream(input).boxed().toList();
-    }
     static String condense(int[] stuff) {
         String[] output = new String[64];
         for (int i = 0; i < 64; i++) {
@@ -381,14 +377,14 @@ class Position {
     }
     byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
-    int bishopPairBonus() {
+    int bishopPairBonus(boolean tactical) {
         int whiteBishops = 0, blackBishops = 0;
         for (int i = 0; i < 64; i++) {
             if (position[i] == 7) whiteBishops++;
             if (position[i] == 8) blackBishops++;
         }
-        int whiteBonus = (whiteBishops >= 2) ? 2 : 0;
-        int blackBonus = (blackBishops >= 2) ? -2 : 0;
+        int whiteBonus = (whiteBishops >= 2 && tactical) ? 2 : (whiteBishops >= 2 && !tactical) ? 1 : 0;
+        int blackBonus = (blackBishops >= 2 && tactical) ? -2 : (blackBishops >= 2 && !tactical) ? -1 : 0;
         return whiteBonus + blackBonus;
     }
     int currentCount() {
@@ -404,12 +400,26 @@ class Position {
                 }
             }
         }
-        int output = 0;
+        int outputTactical = 0;
+        int outputNontactical = 0;
+        boolean tactical = activePieces() > 4;
         for (int i = 0; i < 64; i++) {
-            output += pieceActivity[i] + material[i] + centralControl[i] + kingSafety[i] + space[i]
-            + rooksSeventh[i] + outposts[i]; 
+            outputTactical += pieceActivity[i] + material[i] + centralControl[i]  + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
+            outputNontactical += material[i] + centralControl[i] + space[i] + outposts[i] + (pieceActivity[i] + kingSafety[i] + rooksSeventh[i]) / 3;
         }
-        return output + ((position[64] == 1) ? 1 : -1) + bishopPairBonus();
+        return (tactical ? outputTactical : outputNontactical) + ((position[64] == 1) ? 1 : -1) + bishopPairBonus(tactical);
+    }
+    int activePieces() {
+        //test if both sides have a lot of really active pieces
+        //if true, then currentCount gives priority to piece activity, king safety, bishop pair, active rooks, if not, give priority to space, outposts
+        int reallyActive = 0;
+        for (int i = 0; i < 64; i++) {
+            int modifier = (ChessProject.color(position[i])) ? 1 : -1;
+            if (pieceActivity[i] * modifier >= 8) {
+                reallyActive++;
+            }
+        }
+        return reallyActive;
     }
     void update(int square) {
         pieceActivity[square-1] = 0;
@@ -426,14 +436,14 @@ class Position {
         int[] pieceVision = Reference.unserialize(Reference.getBitboard(square-1, position, piece));
         for (int s : pieceVision) {
             if (s == 27 || s == 28 || s == 35 || s == 36) {
-                centralControl[square-1] = (byte) (centralControl[square-1] + 2 * modifier);
+                centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
             }
         }
         material[square-1] = (byte) ChessProject.materialWorth(piece);
         if (piece == 3 || piece == 4) {
-            pieceActivity[square-1] = (byte) (modifier * pieceVision.length / 4);
-        } else if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
             pieceActivity[square-1] = (byte) (modifier * pieceVision.length / 2);
+        } else if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
+            pieceActivity[square-1] = (byte) (modifier * pieceVision.length);
         }  
         if (piece == 9 || piece == 10) {
             int equivalentY = 9 - ChessProject.getY(square);
@@ -504,8 +514,6 @@ class Position {
         this.position = setup;
         this.limit = timeLimit;
         this.maxDepth = depth;
-        Reference.initializeNonmagic();
-        Reference.initializeMagic();
         for (int i = 0; i < 64; i++) {
             if (setup[i] != 0) {
                 pieceBoard[setup[i] - 1] |= (1L << i);
@@ -538,11 +546,7 @@ class Position {
         }
         //HOPEFULLY this never happens
         String message = "Looking for " + ((position[64] == 1) ? "white" : "black") + " king but found none\nThis is the current position:\n";
-        for (int i = 0; i < 64; i++) {
-            message += Integer.toString(position[i]);
-            if (i % 8 == 7) message += "\n";
-            else message += " ";
-        }
+        display();
         throw new RuntimeException(message);
     }
     void display() {
@@ -554,6 +558,41 @@ class Position {
             }
             System.out.println("");
         }
+    }
+    void displayStats() {
+        int materialCount = 0, pieceActivityCount = 0, centralControlCount = 0, kingSafetyCount = 0, spaceCount = 0, rookCount = 0, outpostsCount = 0;
+        for (int i = 0; i < 64; i++) {
+            materialCount += material[i];
+            pieceActivityCount += pieceActivity[i];
+            centralControlCount += centralControl[i];
+            kingSafetyCount += kingSafety[i];
+            spaceCount += space[i];
+            rookCount += rooksSeventh[i];
+            outpostsCount += outposts[i];
+        }
+        System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
+        System.out.print("Legal moves: ");
+
+        byte[][] getMoves = generateMoves();
+        for (int i = 0; i < getMoves[0].length; i++) {
+            System.out.print(ChessProject.parseNumbers(getMoves[0][i], getMoves[1][i]));
+            if (i < getMoves[0].length-1) System.out.print(", ");
+        }
+        System.out.println("");
+        System.out.print("Material count: ");
+        System.out.println(materialCount);
+        System.out.print("Piece activity differential: ");
+        System.out.println(pieceActivityCount);
+        System.out.print("Central control differential: ");
+        System.out.println(centralControlCount);
+        System.out.print("King safety differential: ");
+        System.out.println(kingSafetyCount);
+        System.out.print("Advanced rook differential: ");
+        System.out.println(rookCount);
+        System.out.print("Outposts: ");
+        System.out.println(outpostsCount);
+        System.out.print("Number of really active pieces: ");
+        System.out.println(activePieces());
     }
     // Hot paths!
     byte[][] pad = new byte[10][1000]; 
@@ -607,167 +646,20 @@ class Position {
             }
         }
     }
-    /*void vision(int square) {
-        clearPad(0);
-        int piece = getPiece(square);
-        boolean color = ChessProject.color(piece);
-        int index = 0;
-        int candidate = 0;
-        switch (piece) {
-            case 1:
-            case 2:
-                candidate = ChessProject.translate(square, 1, 0);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 1, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 0, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, 0);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 0, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 1, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                }
-                break;
-            case 3:
-            case 4:
-                squaresTo(square, 1, 0, color, 1);
-                squaresTo(square, 1, 1, color, 2);
-                squaresTo(square, 0, 1, color, 3);
-                squaresTo(square, -1, 1, color, 4);
-                compilePad(4);
-                squaresTo(square, -1, 0, color, 1);
-                squaresTo(square, -1, -1, color, 2);
-                squaresTo(square, 0, -1, color, 3);
-                squaresTo(square, 1, -1, color, 4);
-                compilePad(4);
-                break;
-            case 5:
-            case 6:
-                squaresTo(square, 1, 0, color, 1);
-                squaresTo(square, 0, 1, color, 2);
-                squaresTo(square, -1, 0, color, 3);
-                squaresTo(square, 0, -1, color, 4);
-                compilePad(4);
-                break;
-            case 7:
-            case 8:
-                squaresTo(square, 1, 1, color, 1);
-                squaresTo(square, -1, 1, color, 2);
-                squaresTo(square, -1, -1, color, 3);
-                squaresTo(square, 1, -1, color, 4);
-                compilePad(4);
-                break;
-            case 9:
-            case 10:
-                candidate = ChessProject.translate(square, 2, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 1, 2);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, 2);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -2, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, -2);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -2, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 1, -2);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, 2, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                }
-                break;
-            case 11:
-                candidate = ChessProject.translate(square, 1, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, 1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                break;
-            case 12:
-                candidate = ChessProject.translate(square, 1, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                candidate = ChessProject.translate(square, -1, -1);
-                if (candidate != 0 && (getPiece(candidate) == 0 || ChessProject.color(getPiece(candidate)) != color)) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
-                }
-                break;
-            default:
-                break;
-        }
-    }*/
     void legalMovesBasic(int square) {
+        clearPad(0);
         int piece = getPiece(square);
         boolean color = ChessProject.color(piece);
         int index = 0;
         if (piece == 11) {
             //pawn
             int candidate = ChessProject.translate(square, 1, 1);
-            if (candidate != 0 && (getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color)) {
+            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 2) {
                 pad[0][index] = (byte) candidate;
                 index++;
             }
             candidate = ChessProject.translate(square, -1, 1);
-            if (candidate != 0 && (getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color)) {
+            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 2) {
                 pad[0][index] = (byte) candidate;
                 index++;
             }
@@ -789,12 +681,12 @@ class Position {
         } else if (piece == 12) {
             //pawn
             int candidate = ChessProject.translate(square, 1, -1);
-            if (candidate != 0 && (getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color)) {
+            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 1) {
                 pad[0][index] = (byte) candidate;
                 index++;
             }
             candidate = ChessProject.translate(square, -1, -1);
-            if (candidate != 0 && (getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color)) {
+            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 1) {
                 pad[0][index] = (byte) candidate;
                 index++;
             }
@@ -816,7 +708,7 @@ class Position {
         } else {
             int[] squares = Reference.unserialize(Reference.getBitboard(square-1, position, piece));
             for (int s : squares) {
-                if (position[s] == 0 || (ChessProject.color(position[s]) != color)) {
+                if (position[s] == 0 || (ChessProject.color(position[s]) != color && position[s] != 1 && position[s] != 2)) {
                     pad[0][index] = (byte) (s + 1);
                     index++;
                 }
@@ -965,7 +857,6 @@ class Position {
         }
         for (int i = 0; i < 72; i++) {
             position[i] = previousPosition[i];
-            undoStack[undoDeep][i] = 0;
             if (i >= 64) continue;
             if (position[i] != 0) {
                 pieceBoard[position[i] - 1] |= (1L << i);
@@ -1381,7 +1272,7 @@ class Position {
             if (!checked && !isTacticalMove(moves[0][i], moves[1][i])) continue;
             makeMove(moves[0][i], moves[1][i]);
             int potential;
-            potential = evalQ(sortMoves(generateMoves()), alpha, beta, false);
+            potential = evalQ(sortMoves(generateMoves()), alpha, beta, true);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1467,14 +1358,15 @@ class Position {
             boolean givesCheck = inCheck();
             int potential;
             try {
-                if (reduce && !givesCheck) {
+                /*if (reduce && !givesCheck) {
                     potential = evalDepth(depth - 2, alpha, beta)[0];
                     if (maximizing ? potential > alpha : potential < beta) {
                         potential = evalDepth(depth - 1, alpha, beta)[0];
                     }
                 } else {
                     potential = evalDepth(depth - 1, alpha, beta)[0];
-                }
+                }*/
+                potential = evalDepth(depth - 1, alpha, beta)[0];
             } finally {
                 restore();
             }
@@ -1512,9 +1404,16 @@ class Position {
 class Reference {
     static final int length = 8_388_608; //2 ^ 23
     //piece-to-square activity for knights
-    static final byte[] knightBonus = {-25, -20, -15, -15, -15, -15, -20, -25, -20, -20, -15, -10, -10, -15, -20, -20,
-    -10, 0, 10, 10, 10, 10, 0, -10, -5, 0, 10, 10, 10, 10, 0, -5, 0, 5, 15, 20, 20, 20, 5, 0, -10, 0, 10, 15, 15, 10, 0, -10,
-    -15, -15, -10, -10, -10, -10, -15, -15, -25, -25, -20, -20, -20, -20, -25, -25};
+    static final byte[] knightBonus = {
+        -12, -10, -8,  -8, -8, -8, -10, -12,
+        -10, -10, -8,  -5, -5, -8, -10, -10,
+        -5,   0,   5,   5,  5,  5,  0,  -5,
+        -2,   0,   5,   5,  5,  5,  0,  -2,
+        0,    2,   8,  10, 10, 10,  2,   0,
+        -5,   0,   5,   8,  8,  5,  0,  -5,
+        -8,  -8,  -5,  -5, -5, -5, -8,  -8,
+        -12, -5,  -5,  -5, -5, -5, -5,  -12
+    };
     static final Map<String, String> openings = Map.ofEntries(
         //0ply
         Map.entry("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "Depth 2147483647\nEvaluation: 0.2\nBest move: e2e4"), // starting position
@@ -1601,24 +1500,193 @@ class Reference {
         int y2 = (square2 - x2) / 8;
         return Math.hypot(x2 - x1, y2 - y1);
     }
+
+    private static long[] bitSplit(long bits) {
+        long[] output = new long[Long.bitCount(bits)];
+        int i = 0;
+        while (bits != 0) {
+            output[i] = Long.lowestOneBit(bits);
+            bits ^= output[i];
+            i++;
+        }
+        return output;
+    }
+    private static Set<Long> combineAll(long bits1, long bits2, long bits3, long bits4) {
+        Set<Long> output = new HashSet<>();
+        Set<Long> one = pickAll(bits1);
+        Set<Long> two = pickAll(bits2);
+        Set<Long> three = pickAll(bits3);
+        Set<Long> four = pickAll(bits4);
+        for (Long item1 : one) {
+            for (Long item2 : two) {
+                for (Long item3 : three) {
+                    for (Long item4 : four) {
+                        output.add(item1.longValue() | item2.longValue() | item3.longValue() | item4.longValue());
+                    }
+                }
+            }
+        }
+        output.remove(0L);
+        return output;
+    }
+    private static Set<Long> pickAll(long allBits) {
+        long[] bits = bitSplit(allBits);
+        Set<Long> everything = new HashSet<>();
+        Set<Long> additions = new HashSet<>();
+        everything.add(0L);
+        for (long bit : bits) {
+            for (Long item : everything) additions.add(item | bit);
+            everything.addAll(additions);
+            additions.clear();
+        }
+        return everything;
+    }
     //bitboards
     private static final int[] bishopDx = {1, 1, -1, -1};
     private static final int[] bishopDy = {-1, 1, 1, -1};
     private static final int[] rookDx = {1, 0, -1, 0};
     private static final int[] rookDy = {0, 1, 0, -1};
-    private static final long[] whitePawnVision = new long[64], blackPawnVision = new long[64],
-    knightVision = new long[64], kingVision = new long[64];
-    private static long serialize(int[] squares) {
+    private static final long[] whitePawnVision = new long[64], blackPawnVision = new long[64], knightVision = new long[64], kingVision = new long[64];
+    private static final long[] bishopVision = {
+        0b1000000001000000001000000001000000001000000001000000001000000000L,
+        0b0000000010000000010000000010000000010000000010000000010100000000L,
+        0b0000000000000000100000000100000000100000000100010000101000000000L,
+        0b0000000000000000000000001000000001000001001000100001010000000000L,
+        0b0000000000000000000000000000000110000010010001000010100000000000L,
+        0b0000000000000000000000010000001000000100100010000101000000000000L,
+        0b0000000000000001000000100000010000001000000100001010000000000000L,
+        0b0000000100000010000001000000100000010000001000000100000000000000L,
+        0b0100000000100000000100000000100000000100000000100000000000000010L,
+        0b1000000001000000001000000001000000001000000001010000000000000101L,
+        0b0000000010000000010000000010000000010001000010100000000000001010L,
+        0b0000000000000000100000000100000100100010000101000000000000010100L,
+        0b0000000000000000000000011000001001000100001010000000000000101000L,
+        0b0000000000000001000000100000010010001000010100000000000001010000L,
+        0b0000000100000010000001000000100000010000101000000000000010100000L,
+        0b0000001000000100000010000001000000100000010000000000000001000000L,
+        0b0010000000010000000010000000010000000010000000000000001000000100L,
+        0b0100000000100000000100000000100000000101000000000000010100001000L,
+        0b1000000001000000001000000001000100001010000000000000101000010001L,
+        0b0000000010000000010000010010001000010100000000000001010000100010L,
+        0b0000000000000001100000100100010000101000000000000010100001000100L,
+        0b0000000100000010000001001000100001010000000000000101000010001000L,
+        0b0000001000000100000010000001000010100000000000001010000000010000L,
+        0b0000010000001000000100000010000001000000000000000100000000100000L,
+        0b0001000000001000000001000000001000000000000000100000010000001000L,
+        0b0010000000010000000010000000010100000000000001010000100000010000L,
+        0b0100000000100000000100010000101000000000000010100001000100100000L,
+        0b1000000001000001001000100001010000000000000101000010001001000001L,
+        0b0000000110000010010001000010100000000000001010000100010010000010L,
+        0b0000001000000100100010000101000000000000010100001000100000000100L,
+        0b0000010000001000000100001010000000000000101000000001000000001000L,
+        0b0000100000010000001000000100000000000000010000000010000000010000L,
+        0b0000100000000100000000100000000000000010000001000000100000010000L,
+        0b0001000000001000000001010000000000000101000010000001000000100000L,
+        0b0010000000010001000010100000000000001010000100010010000001000000L,
+        0b0100000100100010000101000000000000010100001000100100000110000000L,
+        0b1000001001000100001010000000000000101000010001001000001000000001L,
+        0b0000010010001000010100000000000001010000100010000000010000000010L,
+        0b0000100000010000101000000000000010100000000100000000100000000100L,
+        0b0001000000100000010000000000000001000000001000000001000000001000L,
+        0b0000010000000010000000000000001000000100000010000001000000100000L,
+        0b0000100000000101000000000000010100001000000100000010000001000000L,
+        0b0001000100001010000000000000101000010001001000000100000010000000L,
+        0b0010001000010100000000000001010000100010010000011000000000000000L,
+        0b0100010000101000000000000010100001000100100000100000000100000000L,
+        0b1000100001010000000000000101000010001000000001000000001000000001L,
+        0b0001000010100000000000001010000000010000000010000000010000000010L,
+        0b0010000001000000000000000100000000100000000100000000100000000100L,
+        0b0000001000000000000000100000010000001000000100000010000001000000L,
+        0b0000010100000000000001010000100000010000001000000100000010000000L,
+        0b0000101000000000000010100001000100100000010000001000000000000000L,
+        0b0001010000000000000101000010001001000001100000000000000000000000L,
+        0b0010100000000000001010000100010010000010000000010000000000000000L,
+        0b0101000000000000010100001000100000000100000000100000000100000000L,
+        0b1010000000000000101000000001000000001000000001000000001000000001L,
+        0b0100000000000000010000000010000000010000000010000000010000000010L,
+        0b0000000000000010000001000000100000010000001000000100000010000000L,
+        0b0000000000000101000010000001000000100000010000001000000000000000L,
+        0b0000000000001010000100010010000001000000100000000000000000000000L,
+        0b0000000000010100001000100100000110000000000000000000000000000000L,
+        0b0000000000101000010001001000001000000001000000000000000000000000L,
+        0b0000000001010000100010000000010000000010000000010000000000000000L,
+        0b0000000010100000000100000000100000000100000000100000000100000000L,
+        0b0000000001000000001000000001000000001000000001000000001000000001L
+    };
+    private static final long[] rookVision = {
+        0b0000000100000001000000010000000100000001000000010000000111111110L,
+        0b0000001000000010000000100000001000000010000000100000001011111101L,
+        0b0000010000000100000001000000010000000100000001000000010011111011L,
+        0b0000100000001000000010000000100000001000000010000000100011110111L,
+        0b0001000000010000000100000001000000010000000100000001000011101111L,
+        0b0010000000100000001000000010000000100000001000000010000011011111L,
+        0b0100000001000000010000000100000001000000010000000100000010111111L,
+        0b1000000010000000100000001000000010000000100000001000000001111111L,
+        0b0000000100000001000000010000000100000001000000011111111000000001L,
+        0b0000001000000010000000100000001000000010000000101111110100000010L,
+        0b0000010000000100000001000000010000000100000001001111101100000100L,
+        0b0000100000001000000010000000100000001000000010001111011100001000L,
+        0b0001000000010000000100000001000000010000000100001110111100010000L,
+        0b0010000000100000001000000010000000100000001000001101111100100000L,
+        0b0100000001000000010000000100000001000000010000001011111101000000L,
+        0b1000000010000000100000001000000010000000100000000111111110000000L,
+        0b0000000100000001000000010000000100000001111111100000000100000001L,
+        0b0000001000000010000000100000001000000010111111010000001000000010L,
+        0b0000010000000100000001000000010000000100111110110000010000000100L,
+        0b0000100000001000000010000000100000001000111101110000100000001000L,
+        0b0001000000010000000100000001000000010000111011110001000000010000L,
+        0b0010000000100000001000000010000000100000110111110010000000100000L,
+        0b0100000001000000010000000100000001000000101111110100000001000000L,
+        0b1000000010000000100000001000000010000000011111111000000010000000L,
+        0b0000000100000001000000010000000111111110000000010000000100000001L,
+        0b0000001000000010000000100000001011111101000000100000001000000010L,
+        0b0000010000000100000001000000010011111011000001000000010000000100L,
+        0b0000100000001000000010000000100011110111000010000000100000001000L,
+        0b0001000000010000000100000001000011101111000100000001000000010000L,
+        0b0010000000100000001000000010000011011111001000000010000000100000L,
+        0b0100000001000000010000000100000010111111010000000100000001000000L,
+        0b1000000010000000100000001000000001111111100000001000000010000000L,
+        0b0000000100000001000000011111111000000001000000010000000100000001L,
+        0b0000001000000010000000101111110100000010000000100000001000000010L,
+        0b0000010000000100000001001111101100000100000001000000010000000100L,
+        0b0000100000001000000010001111011100001000000010000000100000001000L,
+        0b0001000000010000000100001110111100010000000100000001000000010000L,
+        0b0010000000100000001000001101111100100000001000000010000000100000L,
+        0b0100000001000000010000001011111101000000010000000100000001000000L,
+        0b1000000010000000100000000111111110000000100000001000000010000000L,
+        0b0000000100000001111111100000000100000001000000010000000100000001L,
+        0b0000001000000010111111010000001000000010000000100000001000000010L,
+        0b0000010000000100111110110000010000000100000001000000010000000100L,
+        0b0000100000001000111101110000100000001000000010000000100000001000L,
+        0b0001000000010000111011110001000000010000000100000001000000010000L,
+        0b0010000000100000110111110010000000100000001000000010000000100000L,
+        0b0100000001000000101111110100000001000000010000000100000001000000L,
+        0b1000000010000000011111111000000010000000100000001000000010000000L,
+        0b0000000111111110000000010000000100000001000000010000000100000001L,
+        0b0000001011111101000000100000001000000010000000100000001000000010L,
+        0b0000010011111011000001000000010000000100000001000000010000000100L,
+        0b0000100011110111000010000000100000001000000010000000100000001000L,
+        0b0001000011101111000100000001000000010000000100000001000000010000L,
+        0b0010000011011111001000000010000000100000001000000010000000100000L,
+        0b0100000010111111010000000100000001000000010000000100000001000000L,
+        0b1000000001111111100000001000000010000000100000001000000010000000L,
+        0b1111111000000001000000010000000100000001000000010000000100000001L,
+        0b1111110100000010000000100000001000000010000000100000001000000010L,
+        0b1111101100000100000001000000010000000100000001000000010000000100L,
+        0b1111011100001000000010000000100000001000000010000000100000001000L,
+        0b1110111100010000000100000001000000010000000100000001000000010000L,
+        0b1101111100100000001000000010000000100000001000000010000000100000L,
+        0b1011111101000000010000000100000001000000010000000100000001000000L,
+        0b0111111110000000100000001000000010000000100000001000000010000000L
+    };
+    //static Map<Integer, Map<Long, Long>> bishopBitboards = new HashMap<>();
+    //static Map<Integer, Map<Long, Long>> rookBitboards = new HashMap<>();
+    private static Map<Long, Long>[] bishopBitboards = new Map[64];
+    private static Map<Long, Long>[] rookBitboards = new Map[64];
+    static long serialize(int[] board) {
         long output = 0L;
-        for (int square : squares) {
-            output |= (1L << square);
-        }
-        return output;
-    }
-    private static long serializeAll(int[][] squareSet) {
-        long output = 0L;
-        for (int[] squares : squareSet) {
-            output |= serialize(squares);
+        for (int square = 0; square < 64; square++) {
+            if (board[square] != 0) output |= (1L << square);
         }
         return output;
     }
@@ -1626,13 +1694,11 @@ class Reference {
         int[] output = new int[Long.bitCount(bitboard)];
         int i = 0;
         while (bitboard != 0) {
-            output[i++] = Long.numberOfTrailingZeros(bitboard);
+            output[i] = Long.numberOfTrailingZeros(bitboard);
+            i++;
             bitboard &= (bitboard-1);
         }
         return output;
-    }
-    private static int[][] unserializeMultiple(long[] bitboards) {
-        return new int[][]{unserialize(bitboards[0]), unserialize(bitboards[1]), unserialize(bitboards[2]), unserialize(bitboards[3])};
     }
     private static void addConditional(long[] where, int square, int addX, int addY) {
         //tried to add square to where, if successful, return true, if unsuccessful, return false
@@ -1644,7 +1710,45 @@ class Reference {
             where[square] |= (1L << (squareY * 8 + squareX));
         }
     }
-    static void initializeNonmagic() {
+    private static int distanceToEdge(int squareX, int squareY, int dx, int dy) {
+        int distanceX = switch (dx) {
+            case 1: yield 7 - squareX;
+            case -1: yield squareX;
+            default: throw new IllegalArgumentException("from Reference static method distanceToEdge");
+        };
+        int distanceY = switch (dy) {
+            case 1: yield 7 - squareY;
+            case -1: yield squareY;
+            default: throw new IllegalArgumentException("from Reference static method distanceToEdge");
+        };
+        return Math.min(distanceX, distanceY);
+    }
+    private static long fill(int square, long pieces, int[] dx, int[] dy) {
+        long output = 1L << square;
+        for (int i = 0; i < dx.length; i++) {
+            int currentX = square % 8 + dx[i];
+            int currentY = square / 8 + dy[i];
+            while (currentX >= 0 && currentX < 8 && currentY >= 0 && currentY < 8) {
+                long addition = 1L << (currentX + 8 * currentY);
+                output |= addition;
+                if ((addition & pieces) != 0) break;
+                currentX += dx[i];
+                currentY += dy[i];
+            }
+        }
+        return output;
+    }
+    private static long[] allPossible(int square, int[] dx, int[] dy) {
+        Set<Long> everything = combineAll(
+            fill(square, 0L, new int[]{dx[0]}, new int[]{dy[0]}),
+            fill(square, 0L, new int[]{dx[1]}, new int[]{dy[1]}),
+            fill(square, 0L, new int[]{dx[2]}, new int[]{dy[2]}),
+            fill(square, 0L, new int[]{dx[3]}, new int[]{dy[3]})
+        );
+        long[] out = everything.stream().mapToLong(Long::longValue).toArray();
+        return out;
+    }
+    static void initialize() {
         for (int i = 0; i < 64; i++) {
             //pawns
             addConditional(whitePawnVision, i, 1, 1);
@@ -1669,171 +1773,31 @@ class Reference {
             addConditional(kingVision, i, 1, -1);
             addConditional(kingVision, i, -1, 1);
             addConditional(kingVision, i, -1, -1);
+            //rooks
+            Map<Long, Long> rookMoves = new HashMap<>();
+            for (long p : allPossible(i, rookDx, rookDy)) rookMoves.put(p, fill(i, p, rookDx, rookDy));
+            rookBitboards[i] = rookMoves; //rookBitboards.put(i, rookMoves);
+            //bishops
+            Map<Long, Long> bishopMoves = new HashMap<>();
+            for (long p : allPossible(i, bishopDx, bishopDy)) bishopMoves.put(p, fill(i, p, bishopDx, bishopDy));
+            bishopBitboards[i] = bishopMoves; //bishopBitboards.put(i, bishopMoves);
         }
     }
     //attack map magic bitboards
-    static Map<Long, Long> bishopBitboards = new HashMap<>();
-    static Map<Long, Long> rookBitboards = new HashMap<>();
-    private static int[][] spaces(int square, int[] allPieces, int[] dx, int[] dy) {
-        //includes current square
-        long[] output = {0L, 0L, 0L, 0L};
-        int x, y;
-        for (int i = 0; i < 4; i++) {
-            x = square % 8;
-            y = (square - x) / 8;
-            int currentSquare;
-            do {
-                currentSquare = 8 * y + x;
-                output[i] |= (1L << currentSquare);
-                x += dx[i];
-                y += dy[i];
-                boolean stop = false;
-                for (int piece : allPieces) {
-                    if (piece == currentSquare) {
-                        stop = true;
-                        break;
-                    }
-                }
-                if (stop) break;
-            } while (x >= 0 && x < 8 && y >= 0 && y < 8);
-        }
-        return unserializeMultiple(output);
-    }
-    static void initializeMagic() {
-        for (int i = 0; i < 64; i++) {
-            int[][] bishopEverything = spaces(i, new int[0], bishopDx, bishopDy);
-            int[][] rookEverything = spaces(i, new int[0], rookDx, rookDy);
-            int[] addition = {0, 0, 0, 0};
-            for (int se : bishopEverything[0]) {
-                for (int ne : bishopEverything[1]) {
-                    for (int nw : bishopEverything[2]) {
-                        for (int sw : bishopEverything[3]) {
-                            addition[0] = se;
-                            addition[1] = ne;
-                            addition[2] = nw;
-                            addition[3] = sw;
-                            bishopBitboards.put(serialize(addition) | (1L << i), serializeAll(spaces(i, addition, bishopDx, bishopDy))); 
-                        }
-                    }
-                }
-            }
-            for (int e : rookEverything[0]) {
-                for (int n : rookEverything[1]) {
-                    for (int w : rookEverything[2]) {
-                        for (int s : rookEverything[3]) {
-                            addition[0] = e;
-                            addition[1] = n;
-                            addition[2] = w;
-                            addition[3] = s;
-                            rookBitboards.put(serialize(addition) | (1L << i), serializeAll(spaces(i, addition, rookDx, rookDy)));
-                        }
-                    }
-                }
-            }
-        }
-    }
     static long getBitboard(int square, int[] board, int piece) {
-        if (piece == 3) return getBitboard(square, board, 5) | getBitboard(square, board, 7);
-        if (piece == 4) return getBitboard(square, board, 6) | getBitboard(square, board, 8);
-        final int refX = square % 8;
-        final int refY = (square - refX) / 8;
-        long input = 1L << square;
-        long allPieces = 0L;
-        for (int i = 0; i < 64; i++) {
-            if (board[i] != 0) {
-                allPieces |= (1L << i);
-            }
+        switch (piece) {
+            case 1: case 2: return kingVision[square];
+            case 3: return getBitboard(square, board, 5) | getBitboard(square, board, 7);
+            case 4: return getBitboard(square, board, 6) | getBitboard(square, board, 8);
+            case 5: case 6: return rookBitboards[square].get((serialize(board) & rookVision[square]) | (1L << square));
+            //return rookBitboards.get(square).get((serialize(board) & rookVision[square]) | (1L << square));
+            case 7: case 8: return bishopBitboards[square].get((serialize(board) & bishopVision[square]) | (1L << square));
+            //return bishopBitboards.get(square).get((serialize(board) & bishopVision[square]) | (1L << square));
+            case 9: case 10: return knightVision[square];
+            case 11: return whitePawnVision[square];
+            case 12: return blackPawnVision[square];
+            default: return 0L; //placeholder
         }
-        if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
-            int[] fullSpaces = unserialize(switch (piece) {
-                case 5: case 6: yield serializeAll(spaces(square, new int[0], rookDx, rookDy)) & allPieces;
-                case 7: case 8: yield serializeAll(spaces(square, new int[0], bishopDx, bishopDy)) & allPieces;
-                default: yield 0L;
-            });
-
-            long bits1 = 0L, bits2 = 0L, bits3 = 0L, bits4 = 0L;
-            for (int space : fullSpaces) {
-                int x = space % 8;
-                int y = (space - x) / 8;
-                if (piece == 5 || piece == 6) {
-                    if (x > refX) bits1 |= (1L << space);
-                    if (y > refY) bits2 |= (1L << space);
-                    if (x < refX) bits3 |= (1L << space);
-                    if (y < refY) bits4 |= (1L << space);
-                }
-                if (piece == 7 || piece == 8) {
-                    if (x > refX) {
-                        if (y < refY) {
-                            bits1 |= (1L << space);
-                        } if (y > refY) {
-                            bits2 |= (1L << space);
-                        }
-                    } if (x < refX) {
-                        if (y > refY) {
-                            bits3 |= (1L << space);
-                        } if (y < refY) {
-                            bits4 |= (1L << space);
-                        }
-                    }
-                }
-            }
-            int[] dir1 = unserialize(bits1), dir2 = unserialize(bits2), dir3 = unserialize(bits3), dir4 = unserialize(bits4);
-            int[] closest = {1000, 1000, 1000, 1000}; //can't use {0, 0, 0, 0} because we're using Math.min()
-            for (int s1 : dir1) {
-                closest[0] = Math.min(closest[0], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s1) / 1.41421 : distance(square, s1)));
-            }
-            for (int s2 : dir2) {
-                closest[1] = Math.min(closest[1], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s2) / 1.41421 : distance(square, s2)));
-            }
-            for (int s3 : dir3) {
-                closest[2] = Math.min(closest[2], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s3) / 1.41421 : distance(square, s3)));
-            }
-            for (int s4 : dir4) {
-                closest[3] = Math.min(closest[3], (int) Math.round((piece == 7 || piece == 8) ? distance(square, s4) / 1.41421 : distance(square, s4)));
-            }
-            int[] additions = new int[4];
-            additions[0] = (piece == 7 || piece == 8) ? (refX + closest[0]) + 8 * (refY - closest[0]) : (refX + closest[0]) + 8 * refY;
-            additions[1] = (piece == 7 || piece == 8) ? (refX + closest[1]) + 8 * (refY + closest[1]) : refX + 8 * (refY + closest[1]);
-            additions[2] = (piece == 7 || piece == 8) ? (refX - closest[2]) + 8 * (refY + closest[2]) : (refX - closest[2]) + 8 * refY;
-            additions[3] = (piece == 7 || piece == 8) ? (refX - closest[3]) + 8 * (refY - closest[3]) : refX + 8 * (refY - closest[3]);
-            for (int a : additions) {
-                if (a >= 0 && a <= 63) {
-                    input |= (1L << a);
-                }
-            }
-        }
-        long output = switch (piece) {
-            case 1: case 2: yield kingVision[square];
-            case 5: case 6:
-                if (rookBitboards.containsKey(input)) {
-                    yield rookBitboards.get(input).longValue();
-                } else {
-                    System.out.print("rook");
-                    System.out.print(" ");
-                    for (int i : unserialize(input)) {
-                        System.out.print(i);
-                        System.out.print(" ");
-                    }
-                    throw new RuntimeException();
-                }
-            case 7: case 8:
-                if (bishopBitboards.containsKey(input)) {
-                    yield bishopBitboards.get(input).longValue();
-                } else {
-                    System.out.print("bishop");
-                    System.out.print(" ");
-                    for (int i : unserialize(input)) {
-                        System.out.print(i);
-                        System.out.print(" ");
-                    }
-                    throw new RuntimeException();
-                }
-            case 9: case 10: yield knightVision[square];
-            case 11: yield whitePawnVision[square];
-            case 12: yield blackPawnVision[square];
-            default: yield 0L;
-        };
-        return output;
     }
 }
 class TimeExceededException extends Exception {
