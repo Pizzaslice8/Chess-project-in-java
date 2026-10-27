@@ -7,8 +7,6 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.HashSet;
-import java.util.List;
-import java.util.ArrayList;
 import java.lang.Math;
 
 public class ChessProject {
@@ -22,11 +20,17 @@ public class ChessProject {
         } catch (NoSuchElementException n) {
             System.out.println("\nInterrupt");
         } catch (GameAlreadyOverException g) {
-            String message = switch (g.getMessage()) {
-                case "1": yield "Checkmate white wins";
-                case "2": yield "Checkmate black wins";
-                default: yield "Draw";
-            };
+            String message = "Draw";
+            switch (g.getMessage()) {
+                case "1":
+                    message = "Checkmate white wins";
+                    break;
+                case "2":
+                    message = "Checkmate black wins";
+                    break;
+                default:
+                    break;
+            }
             printRed("Game already over:");
             System.out.println(message);
         } catch (InvalidFENException b) {
@@ -501,12 +505,20 @@ class Position {
         }
         if (piece == 11 || piece == 12) {
             int equivalent = (piece == 11) ? ChessProject.getY(square) : 9 - ChessProject.getY(square);
-            double addition = switch (ChessProject.getX(square)) {
+            double addition = Math.pow(equivalent, 2) / 12.0; //flank files, a, b, g, h
+            switch (ChessProject.getX(square)) {
                 // central space is worth more
-                case 3: case 6: yield Math.pow(equivalent, 2) / 9.0; // c and f files
-                case 4: case 5: yield Math.pow(equivalent, 2) / 7.0; // center files: d and e
-                default: yield Math.pow(equivalent, 2) / 12.0; //flank files, a, b, g, h
-            };
+                case 3:
+                case 6:
+                    addition = Math.pow(equivalent, 2) / 9.0; // c and f files
+                    break;
+                case 4:
+                case 5:
+                    addition = Math.pow(equivalent, 2) / 7.0; // center files: d and e
+                    break;
+                default:
+                    break;
+            }
             space[square-1] = (byte) Math.round(modifier * addition);
         }
     }
@@ -1711,16 +1723,27 @@ class Reference {
         }
     }
     private static int distanceToEdge(int squareX, int squareY, int dx, int dy) {
-        int distanceX = switch (dx) {
-            case 1: yield 7 - squareX;
-            case -1: yield squareX;
-            default: throw new IllegalArgumentException("from Reference static method distanceToEdge");
-        };
-        int distanceY = switch (dy) {
-            case 1: yield 7 - squareY;
-            case -1: yield squareY;
-            default: throw new IllegalArgumentException("from Reference static method distanceToEdge");
-        };
+        int distanceX = 0, distanceY = 0;
+        switch (dx) {
+            case 1:
+                distanceX = 7 - squareX;
+                break;
+            case -1:
+                distanceX = squareX;
+                break;
+            default:
+                throw new IllegalArgumentException("from Reference static method distanceToEdge");
+        }
+        switch (dy) {
+            case 1:
+                distanceY = 7 - squareY;
+                break;
+            case -1:
+                distanceY = squareY;
+                break;
+            default:
+                throw new IllegalArgumentException("from Reference static method distanceToEdge");
+        }
         return Math.min(distanceX, distanceY);
     }
     private static long fill(int square, long pieces, int[] dx, int[] dy) {
