@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.Random;
+import java.util.Comparator;
 import java.lang.Math;
 
 public class ChessProject {
@@ -35,7 +37,7 @@ public class ChessProject {
             System.out.println(message);
         } catch (InvalidFENException b) {
             printRed(b.getMessage());
-        }
+        } 
     }
     static long nodes = 0L;
     static int getTime() {
@@ -176,7 +178,7 @@ public class ChessProject {
                 double start = getTime();
                 nodes = 0;
                 try {
-                    lastCompleted = pos.evalDepth(i);
+                    lastCompleted = pos.evalDepth(i, lastCompleted);
                 } catch (TimeExceededException t) {
                     printRed("Search exceeded execution time at depth: " + i);
                     int raw;
@@ -312,72 +314,96 @@ public class ChessProject {
 }
 class Position {
     int[] position; //can't use byte[] because arithmetic operations will be performed
+    long currentZobrist;
     long[] pieceBoard = new long[12];
     int limit, maxDepth;
     int[][] undoStack = new int[50][72];
-    int undoDeep = 0; 
+    int slot = 0;
+    int undoDeep = 0;
+    //killer moves
+    int[] killerMoves = new int[50];
+    //history
+    int[][] history = new int[500][10];
+    int historyStored = 0;
+    void sortHistory() {
+        Arrays.sort(history, 0, historyStored, Comparator.comparingInt((int[] row) -> Reference.countNonzeros(row)).reversed());
+    }
+    int[] getHistory() {
+        if (historyStored == 0) return new int[0];
+        int[] out = new int[historyStored];
+        for (int i = 0; i < historyStored; i++) {
+            out[i] = history[i][0];
+        }
+        return out;
+    }
+    void storeQuietMove(int piece, int start, int end, int depth) {
+        int compressed = compressMove(piece, start, end);
+        //store killer move
+        if (killerMoves[0] != compressed && killerMoves[1] != compressed && killerMoves[2] != compressed) {
+            if (killerMoves[0] == 0) killerMoves[0] = compressed;
+            else if (killerMoves[1] == 0) killerMoves[1] = compressed;
+            else if (killerMoves[2] == 0) killerMoves[2] = compressed;
+        }
+        //store history
+        int index = -1;
+        for (int i = 0; i < historyStored; i++) {
+            if (history[i][0] == compressed) {
+                index = i;
+                break;
+            }
+        }
+        if (index == -1) {
+            history[historyStored][0] = compressed;
+            historyStored++;
+        } else if (Reference.countNonzeros(history[index]) != 10) {
+            history[index][Reference.countNonzeros(history[index])] = compressed;
+        }
+    }
     //transposition table
-
-    long[] table14 = new long[Reference.length * 4];
-    long[] table58 = new long[Reference.length];
-    boolean[] tableUsed = new boolean[Reference.length];
+    long[] zobristStorage = new long[Reference.length];
     int[] evals = new int[Reference.length]; //in decipawns
     int[][] otherInfo = new int[Reference.length][4]; //best move from, best move to, depth searched, bound
-    int getIndex(int[] pos) {
-        long hash = 0x9E3779B97F4A7C15L;
-        for (int word = 0; word < 4; word++) {
-            long packed = packedBoardWord(pos, word);
-            hash = Long.rotateLeft(hash ^ packed, 27) * 0x94D049BB133111EBL;
-        }
-        long metadata = positionMetadata(pos);
-        hash = Long.rotateLeft(hash ^ metadata, 27) * 0x94D049BB133111EBL;
-        int slot = (int) Math.floorMod(hash, Reference.length);
-        if (!tableUsed[slot] || table58[slot] != metadata) return -1;
-        for (int word = 0; word < 4; word++) {
-            if (table14[slot * 4 + word] != packedBoardWord(pos, word)) return -1;
-        }
-        return slot;
-    }
-    long packedBoardWord(int[] pos, int word) {
-        long packed = 0L;
-        for (int square = 0; square < 16; square++) {
-            packed |= (long) (pos[word * 16 + square] & 0x0F) << (square * 4);
-        }
-        return packed;
-    }
-    long positionMetadata(int[] pos) {
-        return ((long) pos[70] << 12)
-            | ((long) pos[69] << 5)
-            | ((long) pos[65] << 4)
-            | ((long) pos[66] << 3)
-            | ((long) pos[67] << 2)
-            | ((long) pos[68] << 1)
-            | pos[64];
-    }
     void store(int[] pos, int evaluation, int bestStart, int bestEnd, int depth, int bound) {
-        long hash = 0x9E3779B97F4A7C15L;
-        for (int word = 0; word < 4; word++) {
-            long packed = packedBoardWord(pos, word);
-            hash = Long.rotateLeft(hash ^ packed, 27) * 0x94D049BB133111EBL;
+        try {
+            zobristStorage[slot] = Reference.getZobrist(position);
+            evals[slot] = evaluation;
+            otherInfo[slot][0] = bestStart;
+            otherInfo[slot][1] = bestEnd;
+            otherInfo[slot][2] = depth;
+            otherInfo[slot][3] = bound;
+            slot++;
+        } catch (ArrayIndexOutOfBoundsException a) {
+            throw new OutOfSpaceException();
         }
-        long metadata = positionMetadata(pos);
-        hash = Long.rotateLeft(hash ^ metadata, 27) * 0x94D049BB133111EBL;
-        int slot = (int) Math.floorMod(hash, Reference.length);
-        int existingSlot = getIndex(pos);
-        if (existingSlot != -1) {
-            if (otherInfo[existingSlot][2] > depth) return;
-            slot = existingSlot;
+    }
+    int[] getInfo() {
+        for (int i = 0; i < slot; i++) {
+            if (currentZobrist == zobristStorage[i]) {
+                //found a match!
+                return new int[]{evals[i], otherInfo[i][0], otherInfo[i][1], otherInfo[i][2], otherInfo[i][3]};
+            }
         }
-        for (int word = 0; word < 4; word++) {
-            table14[slot * 4 + word] = packedBoardWord(pos, word);
-        }
-        table58[slot] = metadata;
-        tableUsed[slot] = true;
-        evals[slot] = evaluation;
-        otherInfo[slot][0] = bestStart;
-        otherInfo[slot][1] = bestEnd;
-        otherInfo[slot][2] = depth;
-        otherInfo[slot][3] = bound;
+        return new int[0];
+    }
+    int compressMove(int piece, int start, int end) {
+        //piece has 4 bits, start has 6 bits, end has 6 bits
+        //will never overflow to Integer.MIN_VALUE because piece doesn't go all the way up to 16
+        int out = piece-1;
+        out <<= 6;
+        out += start-1;
+        out <<= 6;
+        out += end-1;
+        return out;
+    }
+    int[] extractMove(int compressed) {
+        //start, end, piece
+        int[] out = new int[3];
+        out[1] = compressed % 0b1000000 + 1;
+        compressed >>= 6;
+        out[0] = compressed % 0b1000000 + 1;
+        compressed >>= 6;
+        out[2] = compressed % 0b10000 + 1;
+        return out;
     }
     byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
@@ -526,6 +552,7 @@ class Position {
         this.position = setup;
         this.limit = timeLimit;
         this.maxDepth = depth;
+        this.currentZobrist = Reference.getZobrist(setup);
         for (int i = 0; i < 64; i++) {
             if (setup[i] != 0) {
                 pieceBoard[setup[i] - 1] |= (1L << i);
@@ -582,6 +609,8 @@ class Position {
             rookCount += rooksSeventh[i];
             outpostsCount += outposts[i];
         }
+        System.out.print("Current zobrist hash: ");
+        System.out.println(currentZobrist);
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
 
@@ -728,6 +757,7 @@ class Position {
         }
     }
     void makeMove(int start, int end) {
+        currentZobrist = Reference.updateZobrist(position, currentZobrist, start, end);
         for (int i = 0; i < 72; i++) {
             undoStack[undoDeep][i] = position[i];
         }
@@ -864,6 +894,7 @@ class Position {
     void restore() {
         undoDeep--;
         int[] previousPosition = (undoDeep >= 0) ? undoStack[undoDeep] : new int[72]; //safeguard, shouldn't ever happen
+        currentZobrist = Reference.getZobrist(previousPosition);
         for (int i = 0; i < 12; i++) {
             pieceBoard[i] = 0L;
         }
@@ -1034,15 +1065,15 @@ class Position {
         return out;
     }
     byte[][] sortMoves(byte[][] unsortedMoves) {
+        sortHistory();
         int[][] moves = new int[unsortedMoves[0].length][3]; //from, to, score
         boolean isEndgame = endgame();
-        int cachedIndex = getIndex(position);
-        int cachedStart = cachedIndex == -1 ? 0 : otherInfo[cachedIndex][0];
-        int cachedEnd = cachedIndex == -1 ? 0 : otherInfo[cachedIndex][1];
+        int[] data = getInfo();
         /*score based on:
         1. cached best move
         2. captures, most valuable victim, least valuable attacker
-        3. history
+        3. killer moves
+        4. history
         If not:
         - Rank forward and center-seeking moves above backward moves
         - Rank pawn moves close to promotion higher
@@ -1057,9 +1088,11 @@ class Position {
             moves[i][0] = start;
             moves[i][1] = end;
             //Prefer the best move previously found for this position.
-            if (cachedIndex != -1 && start == cachedStart && end == cachedEnd) {
-                moves[i][2] = Integer.MAX_VALUE;
-                continue;
+            if (data.length != 0) {
+                if (start == data[1] && end == data[2]) {
+                    moves[i][2] = Integer.MAX_VALUE;
+                    continue;
+                }
             }
             int piece = getPiece(start);
             boolean pieceColor = ChessProject.color(piece);
@@ -1082,7 +1115,31 @@ class Position {
                 moves[i][2] = Integer.MAX_VALUE - 361 + difference;
                 continue;
             }
-            //quiet moves not principal or in history, counting up from 0 as opposed to counting down from 2147483647
+            //killer moves heuristic
+            boolean foundMatch = false;
+            for (int killerMove : killerMoves) {
+                int[] extracted = extractMove(killerMove);
+                if (start == extracted[0] && end == extracted[1]) {
+                    //found match
+                    moves[i][2] = Integer.MAX_VALUE - 362;
+                    foundMatch = true;
+                    break;
+                }
+            }
+            if (foundMatch) continue;
+            //history heuristic
+            int[] historySorted = getHistory();
+            for (int j = 0; j < historySorted.length; j++) {
+                int[] extracted = extractMove(historySorted[j]);
+                if (start == extracted[0] && end == extracted[1]) {
+                    //found match
+                    moves[i][2] = Integer.MAX_VALUE - 363 - j;
+                    foundMatch = true;
+                    break;
+                }
+            }
+            if (foundMatch) continue;
+            //quiet moves not principal or in killer moves or in history, counting up from 0 as opposed to counting down from 2147483647
             int cumulative = 0;
             //reward center-seeking moves
             double startProximity = Math.hypot(ChessProject.getX(start) - 4.5, ChessProject.getY(start) - 4.5);
@@ -1197,9 +1254,11 @@ class Position {
                 case 3:
                 case 4:
                     queens = true;
+                    break;
                 default:
                     break;
             }
+            if (queens == true) break;
         }
         if (queens) {
             for (int i = 0; i < 64; i++) {
@@ -1258,6 +1317,19 @@ class Position {
     int[] evalDepth(int depth) throws TimeExceededException {
         return evalDepth(depth, Integer.MIN_VALUE, Integer.MAX_VALUE);
     }
+    int[] evalDepth(int depth, int[] previousResult) throws TimeExceededException {
+        //aspiration window
+        if (previousResult == null) return evalDepth(depth);
+        int lower = (Integer.MIN_VALUE + 50 < previousResult[0]) ? previousResult[0] - 50 : Integer.MIN_VALUE;
+        //in case previousResult[0] is less than 50 away from Integer.MIN_VALUE
+        int higher = (Integer.MAX_VALUE - 50 > previousResult[0]) ? previousResult[0] + 50 : Integer.MAX_VALUE;
+        //in case previousResult[0] is less than 50 away from Integer.MAX_VALUE
+        int[] shallowSearch = evalDepth(depth, lower, higher);
+        if (shallowSearch[0] == higher || shallowSearch[0] == lower)
+        //the shallow search returned a bound, need to do a full search
+        return evalDepth(depth);
+        else return shallowSearch;
+    }
     int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval) {
         ChessProject.nodes++;
         byte[][] moves = sortedMoves;
@@ -1299,28 +1371,31 @@ class Position {
     }
     int[] evalDepth(int depth, int alpha, int beta) throws TimeExceededException {
         ChessProject.nodes++;
+        if (depth == maxDepth) {
+            killerMoves[0] = 0;
+            killerMoves[1] = 0;
+            killerMoves[2] = 0;
+        }
         int alphaOriginal = alpha;
         int betaOriginal = beta;
         int bound = 0;
-        int neededIndex = getIndex(position);
-        if (neededIndex != -1) {
-            int cachedEvaluation = evals[neededIndex];
-            int cachedDepth = otherInfo[neededIndex][2];
-            int cachedBound = otherInfo[neededIndex][3];
-            if (cachedDepth >= depth) {
-                if (cachedBound == 0) {
-                    return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
+        int[] data = getInfo();
+        if (data.length != 0) {
+            if (data[3] >= depth) {
+                if (data[4] == 0) {
+                    return new int[]{data[0], data[1], data[2]};
                 }
-                if (cachedBound == -1) {
-                    if (cachedEvaluation >= beta) return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
-                    alpha = Math.max(alpha, cachedEvaluation);
+                if (data[4] == -1) {
+                    if (data[0] >= beta) return new int[]{data[0], data[1], data[2]};
+                    alpha = Math.max(alpha, data[0]);
                 }
-                if (cachedBound == 1) {
-                    if (cachedEvaluation <= alpha) return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
-                    beta = Math.min(beta, cachedEvaluation);
+                if (data[4] == 1) {
+                    if (data[0] <= alpha) return new int[]{data[0], data[1], data[2]};
+                    beta = Math.min(beta, data[0]);
                 }
                 if (alpha >= beta) {
-                    return new int[]{cachedEvaluation, otherInfo[neededIndex][0], otherInfo[neededIndex][1]};
+                    if (!isTacticalMove(data[1], data[2])) storeQuietMove(getPiece(data[1]), data[1], data[2], depth);
+                    return new int[]{data[0], data[1], data[2]};
                 }
             }
         }
@@ -1336,12 +1411,14 @@ class Position {
             int enPassantSquare = position[69];
             position[64] = 1 - position[64]; //make a null move
             position[69] = 0;
+            currentZobrist = Reference.passMoveZobrist(position, currentZobrist);
             try {
                 int nullDepth = depth - 3;
                 evalPass = maximizing ? evalDepth(nullDepth, beta - 1, beta) : evalDepth(nullDepth, alpha, alpha + 1);
             } finally {
                 position[64] = 1 - position[64]; //restore original position
                 position[69] = enPassantSquare;
+                currentZobrist = Reference.restoreFromPassZobrist(currentZobrist, enPassantSquare);
             }
             if (maximizing ? evalPass[0] >= beta : evalPass[0] <= alpha) {
                 return new int[]{maximizing ? beta : alpha, 0, 0};
@@ -1370,15 +1447,19 @@ class Position {
             boolean givesCheck = inCheck();
             int potential;
             try {
-                /*if (reduce && !givesCheck) {
-                    potential = evalDepth(depth - 2, alpha, beta)[0];
-                    if (maximizing ? potential > alpha : potential < beta) {
-                        potential = evalDepth(depth - 1, alpha, beta)[0];
-                    }
-                } else {
+                //principal variation search
+                //search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
+                if (i == 0) {
                     potential = evalDepth(depth - 1, alpha, beta)[0];
-                }*/
-                potential = evalDepth(depth - 1, alpha, beta)[0];
+                } else {
+                    if (maximizing) {
+                        int trial = evalDepth(depth - 1, alpha, alpha + 1)[0];
+                        potential = (trial > alpha) ? evalDepth(depth - 1, alpha, beta)[0] : trial;
+                    } else {
+                        int trial = evalDepth(depth - 1, beta - 1, beta)[0];
+                        potential = (trial < beta) ? evalDepth(depth - 1, alpha, beta)[0] : trial;
+                    }
+                }
             } finally {
                 restore();
             }
@@ -1398,6 +1479,7 @@ class Position {
                 beta = Math.min(beta, evaluation);
             }
             if (alpha >= beta) {
+                if (!isTacticalMove(moves[0][i], moves[1][i])) storeQuietMove(getPiece(moves[0][i]), moves[0][i], moves[1][i], depth);
                 break;
             }
         }
@@ -1415,6 +1497,144 @@ class Position {
 }
 class Reference {
     static final int length = 8_388_608; //2 ^ 23
+    static int countNonzeros(int[] inputArray) {
+        int count = 0;
+        for (int element : inputArray) {
+            if (element != 0) count++;
+        }
+        return count;
+    }
+    private static Random generator = new Random(-0x382E4DFBA50BC32FL);
+    private static final long empty = generator.nextLong();
+    private static final long[][] zobrist = new long[64][13]; //13th slot is for if the square is available for en passant
+    private static final long whiteToMove = generator.nextLong();
+    private static final long blackToMove = generator.nextLong();
+    private static final long zobristWCS = generator.nextLong(); //white castle short
+    private static final long zobristWCL = generator.nextLong(); //white castle long
+    private static final long zobristBCS = generator.nextLong(); //black castle short
+    private static final long zobristBCL = generator.nextLong(); //black castle long
+    static long getZobrist(int[] position) {
+        long out = empty;
+        for (int i = 0; i < 64; i++) {
+            if (position[i] != 0) {
+                out ^= zobrist[i][position[i]-1];
+            }
+        }
+        out ^= ((position[64] == 1) ? whiteToMove : blackToMove);
+        if (position[65] == 1) out ^= zobristWCS;
+        if (position[66] == 1) out ^= zobristWCL;
+        if (position[67] == 1) out ^= zobristBCS;
+        if (position[68] == 1) out ^= zobristBCL;
+        if (position[69] != 0) out ^= zobrist[position[69]-1][12];
+        return out;
+    }
+    static long passMoveZobrist(int[] posBefore, long zobristBefore) {
+        zobristBefore ^= whiteToMove;
+        zobristBefore ^= blackToMove;
+        if (posBefore[69] != 0) zobristBefore ^= zobrist[posBefore[69]-1][12];
+        return zobristBefore;
+    }
+    static long restoreFromPassZobrist(long zobristModified, int originalEP) {
+        zobristModified ^= whiteToMove;
+        zobristModified ^= blackToMove;
+        if (originalEP != 0) zobristModified ^= zobrist[originalEP-1][12];
+        return zobristModified;
+    }
+    static long updateZobrist(int[] posBefore, long zobristBefore, int start, int end) {
+        int piece = posBefore[start-1];
+        int captured = posBefore[end-1];
+        zobristBefore ^= zobrist[start-1][piece-1];
+        zobristBefore ^= zobrist[end-1][piece-1];
+        if (posBefore[69] != 0) zobristBefore ^= zobrist[posBefore[69]-1][12];
+        if (end == posBefore[69]) {
+            if (piece == 11) {
+                zobristBefore ^= zobrist[(end - 8) - 1][11];
+            } else if (piece == 12) {
+                zobristBefore ^= zobrist[(end + 8) - 1][10];
+            } else if (captured != 0) {
+                zobristBefore ^= zobrist[end-1][captured-1];
+            }
+        } else if (captured != 0) zobristBefore ^= zobrist[end-1][captured-1];
+        if (captured == 5) {
+            if (end == 8 && posBefore[65] != 0) zobristBefore ^= zobristWCS;
+            if (end == 1 && posBefore[66] != 0) zobristBefore ^= zobristWCL;
+        }
+        if (captured == 6) {
+            if (end == 64 && posBefore[67] != 0) zobristBefore ^= zobristBCS;
+            if (end == 57 && posBefore[68] != 0) zobristBefore ^= zobristBCL;
+        }
+        switch (piece) {
+            case 1:
+                if (start == 5) {
+                    if (posBefore[65] != 0) zobristBefore ^= zobristWCS;
+                    if (posBefore[66] != 0) zobristBefore ^= zobristWCL;
+                    if (end == 7) {
+                        //move rook
+                        zobristBefore ^= zobrist[7][4];
+                        zobristBefore ^= zobrist[5][4];
+                    }
+                    if (end == 3) {
+                        //move rook
+                        zobristBefore ^= zobrist[0][4];
+                        zobristBefore ^= zobrist[3][4];
+                    }
+                }
+                break;
+            case 2:
+                if (start == 61) {
+                    if (posBefore[67] != 0) zobristBefore ^= zobristBCS;
+                    if (posBefore[68] != 0) zobristBefore ^= zobristBCL;
+                    if (end == 63) {
+                        //move rook
+                        zobristBefore ^= zobrist[63][5];
+                        zobristBefore ^= zobrist[61][5];
+                    }
+                    if (end == 59) {
+                        //move rook
+                        zobristBefore ^= zobrist[56][5];
+                        zobristBefore ^= zobrist[59][5];
+                    }
+                }
+                break;
+            case 5:
+                if (start == 8 && posBefore[65] != 0) zobristBefore ^= zobristWCS;
+                if (start == 1 && posBefore[66] != 0) zobristBefore ^= zobristWCL;
+                break;
+            case 6:
+                if (start == 64 && posBefore[67] != 0) zobristBefore ^= zobristBCS;
+                if (start == 57 && posBefore[68] != 0) zobristBefore ^= zobristBCL;
+                break;
+            case 11:
+                if (end - start == 16) {
+                    boolean pawnToLeft = end % 8 != 1 /*not on the a-file*/ && posBefore[(end - 1) - 1] == 12;
+                    boolean pawnToRight = end % 8 != 0 /*not on the h-file*/ && posBefore[(end + 1) - 1] == 12;
+                    if (pawnToLeft || pawnToRight) zobristBefore ^= zobrist[(end - 8) - 1][12];
+                }
+                if (end > 56) {
+                    //promotion
+                    zobristBefore ^= zobrist[end-1][10];
+                    zobristBefore ^= zobrist[end-1][2];
+                }
+                break;
+            case 12:
+                if (end - start == -16) {
+                    boolean pawnToLeft = end % 8 != 1 /*not on the a-file*/ && posBefore[(end - 1) - 1] == 11;
+                    boolean pawnToRight = end % 8 != 0 /*not on the h-file*/ && posBefore[(end + 1) - 1] == 11;
+                    if (pawnToLeft || pawnToRight) zobristBefore ^= zobrist[(end + 8) - 1][12];
+                }
+                if (end <= 8) {
+                    //promotion
+                    zobristBefore ^= zobrist[end-1][11];
+                    zobristBefore ^= zobrist[end-1][3];
+                }
+                break;
+            default:
+                break;
+        }
+        zobristBefore ^= whiteToMove; //do these in any order
+        zobristBefore ^= blackToMove;
+        return zobristBefore;
+    }
     //piece-to-square activity for knights
     static final byte[] knightBonus = {
         -12, -10, -8,  -8, -8, -8, -10, -12,
@@ -1804,6 +2024,10 @@ class Reference {
             Map<Long, Long> bishopMoves = new HashMap<>();
             for (long p : allPossible(i, bishopDx, bishopDy)) bishopMoves.put(p, fill(i, p, bishopDx, bishopDy));
             bishopBitboards[i] = bishopMoves; //bishopBitboards.put(i, bishopMoves);
+            //zobrist
+            for (int j = 0; j < 13; j++) {
+                zobrist[i][j] = generator.nextLong();
+            }
         }
     }
     //attack map magic bitboards
@@ -1841,5 +2065,10 @@ class InvalidFENException extends Exception {
 class GameEndsException extends Exception {
     GameEndsException(int status) {
         super(Integer.toString(status));
+    }
+}
+class OutOfSpaceException extends RuntimeException {
+    OutOfSpaceException() {
+        super("Oops, memory threshold exceeded...");
     }
 }
