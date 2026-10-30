@@ -301,13 +301,6 @@ public class ChessProject {
             default: return 0;
         }
     }
-    static String condense(int[] stuff) {
-        String[] output = new String[64];
-        for (int i = 0; i < 64; i++) {
-            output[i] = Integer.toString(stuff[i]);
-        }
-        return String.join(" ", output);
-    }
     static boolean color(int piece) {
         return (piece % 2) == 1;
     }
@@ -545,6 +538,14 @@ class Position {
                 default:
                     break;
             }
+            if (endgame()) {
+                for (int s : passedPawns()) {
+                    if (square == s) {
+                        modifier *= 5;
+                        break;
+                    }
+                }
+            }
             space[square-1] = (byte) Math.round(modifier * addition);
         }
     }
@@ -559,15 +560,6 @@ class Position {
             }
             update(i+1);
         }
-    }
-    int numberOfPieces() {
-        int output = 0;
-        for (int i = 0; i < 64; i++) {
-            if (position[i] > 0) {
-                output++;
-            }
-        }
-        return output;
     }
     int getPiece(int square) {
         if (square == 0) {
@@ -1302,7 +1294,7 @@ class Position {
         //if true, zugzwang may happen at some point -> cancel the null move prune
         if (!endgame()) return false;
         for (int i = 0; i < 64; i++) {
-            switch(position[i]) {
+            switch (position[i]) {
                 case 1:
                 case 2:
                 case 11:
@@ -1313,6 +1305,72 @@ class Position {
             }
         }
         return true;
+    }
+    int[] passedPawns() {
+        boolean[] whitePawnFiles = {false, false, false, false, false, false, false, false}, blackPawnFiles = {false, false, false, false, false, false, false, false};
+        for (int i = 0; i < 64; i++) {
+            if (position[i] == 11) whitePawnFiles[i] = true;
+            if (position[i] == 12) blackPawnFiles[i] = true;
+        }
+        boolean[] whitePassedFiles = {false, false, false, false, false, false, false, false}, blackPassedFiles = {false, false, false, false, false, false, false, false};
+        boolean passed;
+        for (int i = 0; i < 8; i++) {
+            passed = whitePawnFiles[i] && !blackPawnFiles[i];
+            try {passed &= !blackPawnFiles[i-1];} catch (ArrayIndexOutOfBoundsException a) {}
+            try {passed &= !blackPawnFiles[i+1];} catch (ArrayIndexOutOfBoundsException a) {}
+            whitePassedFiles[i] = passed;
+            passed = blackPawnFiles[i] && !whitePawnFiles[i];
+            try {passed &= !whitePawnFiles[i-1];} catch (ArrayIndexOutOfBoundsException a) {}
+            try {passed &= !whitePawnFiles[i+1];} catch (ArrayIndexOutOfBoundsException a) {}
+            blackPawnFiles[i] = passed;
+        }
+        int[] out = new int[16];
+        int i = 0;
+        for (int j = 0; j < 64; j++) {
+            int file = j % 8;
+            if (position[j] == 11 && whitePassedFiles[file]) out[i++] = j;
+            if (position[j] == 12 && blackPassedFiles[file]) out[i++] = j;
+        }
+        return Arrays.copyOf(out, Reference.countNonzeros(out));
+    }
+    int simpleCheckmate() {
+        //0 = no, 1 = ladder - white, 2 = white with queen, 3 = white with rook, -1 = ladder - black, -2 = black with queen, -3 = black with rook
+        int whiteQueens = 0, whiteRooks = 0, whiteHeavyPieces = 0, blackQueens = 0, blackRooks = 0, blackHeavyPieces = 0;
+        for (int i = 0; i < 64; i++) {
+            switch (position[i]) {
+                case 1: case 2: break;
+                case 3:
+                    whiteQueens++;
+                    whiteHeavyPieces++;
+                    break;
+                case 4:
+                    blackQueens++;
+                    blackHeavyPieces++;
+                    break;
+                case 5:
+                    whiteRooks++;
+                    whiteHeavyPieces++;
+                    break;
+                case 6:
+                    blackRooks++;
+                    blackHeavyPieces++;
+                    break;
+                case 7: return 0;
+                case 8: return 0;
+                case 9: return 0;
+                case 10: return 0;
+                case 11: return 0;
+                case 12: return 0;
+            }
+        }
+        if (whiteHeavyPieces > 0 && blackHeavyPieces > 0) return 0;
+        if (whiteHeavyPieces > 1) return 1;
+        if (blackHeavyPieces > 1) return -1;
+        if (whiteQueens == 1) return 2;
+        if (whiteRooks == 1) return 3;
+        if (blackQueens == 1) return -2;
+        if (blackRooks == 1) return -3;
+        return 0;
     }
     int[] evalDepth(int depth) throws TimeExceededException {
         return evalDepth(depth, Integer.MIN_VALUE, Integer.MAX_VALUE);
