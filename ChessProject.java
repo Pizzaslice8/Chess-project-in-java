@@ -204,7 +204,13 @@ public class ChessProject {
                 int raw = lastCompleted[0];
                 double rawEval = raw;
                 double evaluation = rawEval / 10.0; // convert decipawns (1/10 pawn) to pawns
-                System.out.println("Evaluation: " + Double.toString(evaluation));
+                if (evaluation == 214748364.7 || evaluation == -214748364.8) {
+                    System.out.print("\u001b[33m");
+                    System.out.print("Evaluation: " + Double.toString(evaluation));
+                    System.out.print("\u001b[0m");
+                    System.out.print("\n");
+                }
+                else System.out.println("Evaluation: " + Double.toString(evaluation));
                 System.out.println("Best move: " + parseNumbers(lastCompleted[1], lastCompleted[2]));
                 System.out.println("Nodes per second: " + Double.toString(nodes / timeTaken));
                 System.out.println("in " + Double.toString(timeTaken) + " seconds\n");
@@ -612,6 +618,7 @@ class Position {
             if (i < getMoves[0].length-1) System.out.print(", ");
         }
         System.out.println("");
+        System.out.println("Checkmate algorithm activated? " + ((simpleCheckmate() == 0) ? "no" : "yes"));
         System.out.print("Material count: ");
         System.out.println(materialCount);
         System.out.print("Piece activity differential: ");
@@ -1309,8 +1316,8 @@ class Position {
     int[] passedPawns() {
         boolean[] whitePawnFiles = {false, false, false, false, false, false, false, false}, blackPawnFiles = {false, false, false, false, false, false, false, false};
         for (int i = 0; i < 64; i++) {
-            if (position[i] == 11) whitePawnFiles[i] = true;
-            if (position[i] == 12) blackPawnFiles[i] = true;
+            if (position[i] == 11) whitePawnFiles[i % 8] = true;
+            if (position[i] == 12) blackPawnFiles[i % 8] = true;
         }
         boolean[] whitePassedFiles = {false, false, false, false, false, false, false, false}, blackPassedFiles = {false, false, false, false, false, false, false, false};
         boolean passed;
@@ -1433,6 +1440,156 @@ class Position {
             killerMoves[0] = 0;
             killerMoves[1] = 0;
             killerMoves[2] = 0;
+        }
+        int checkmateCase = simpleCheckmate();
+        if (checkmateCase != 0) {
+            /* Checkmate algorithm!
+
+            First: check for mate in 2
+            For ladder:
+            1. box the king
+            2. move pieces up to give checkmate
+            3. if the king reaches the pieces and the back piece isn't a queen, move to other side of the board
+            4. check for stalemate
+            For single piece checkmates:
+            1. box the king
+            2. approach with king
+            3. gradually decrease the size of the box
+
+            */
+            int possibleEval = (checkmateCase > 0) ? Integer.MAX_VALUE : Integer.MIN_VALUE;
+            if (depth >= 3) {
+                int[] checkForMate = evalDepth(3);
+                if (checkForMate[0] == possibleEval) return checkForMate;
+                if ((checkmateCase > 0) != (position[64] == 1)) /*well, this is bad...*/ return new int[]{possibleEval, checkForMate[1], checkForMate[2]};
+            }
+            //squares based in 0-63 for now
+            int targetKing = (checkmateCase > 0) ? Reference.unserialize(pieceBoard[1])[0] : Reference.unserialize(pieceBoard[0])[0];
+            int kingFile = targetKing % 8;
+            int kingRank = (targetKing - kingFile) / 8;
+            int[] pieces = (checkmateCase > 0) ? Reference.unserialize(pieceBoard[2] | pieceBoard[4]) : Reference.unserialize(pieceBoard[3] | pieceBoard[5]);
+            int closest = Reference.closestEdge(targetKing);
+            int[] seekSquares = new int[8];
+            boolean cutOff = false;
+            switch (closest) {
+                case 1:
+                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingRank * 8 + 8) + i;
+                    break;
+                case 2:
+                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingFile + 1) + (8 * i);
+                    break;
+                case 3:
+                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingRank * 8 - 8) + i;
+                    break;
+                case 4:
+                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingFile - 1) + (8 * i);
+                    break;
+                default: break;
+            }
+            for (int p : pieces) {
+                for (int s : seekSquares) {
+                    if (p == s) {
+                        cutOff = true;
+                        break;
+                    }
+                    if (cutOff) break;
+                }
+            }
+            if (cutOff) {
+                /*Algorithm:
+                
+                Ladder: just move pieces up
+                if the king can take it, move the trailing piece to the far edge of the board
+                Queen: keep moving the queen a knight's distance away from the king until it's in the corner
+                -> perpetual zugzwang
+                then keep it a "camel's distance" away from the corner (g5/e7 for h8) when the king is stuck in the corner, and approach with king
+                Rook: if the king is far, move it up, otherwise:
+                if the size of the box can be decreased, do it, otherwise:
+                waste a move with the king, force the other king to move
+                */
+                switch (checkmateCase) {
+                    case 1:
+                    case -1:
+                        //ladder
+                    case 2:
+                    case -2:
+                        //king and queen
+                    case 3:
+                    case -3:
+                        //king and rook
+                    default: break;
+                }
+            } else {
+                int[] potentialMovesStart = new int[50]; //1-64
+                int[] potentialMovesEnd = new int[50]; //1-64
+                int index = 0;
+                for (int i = 0; i < pieces.length; i++) {
+                    for (byte s : legalMoves(pieces[i]+1)) { // 1-64
+                        for (int q : seekSquares) { // 0-63
+                            if (s == q+1) {
+                                potentialMovesStart[index] = pieces[i]+1;
+                                potentialMovesEnd[index] = s;
+                                index++;
+                                break;
+                            }
+                        }
+                    }
+                }
+                potentialMovesStart = Arrays.copyOf(potentialMovesStart, Reference.countNonzeros(potentialMovesStart));
+                potentialMovesEnd = Arrays.copyOf(potentialMovesEnd, Reference.countNonzeros(potentialMovesEnd));
+                //check to see if it can be taken: remove piece, see if king can go there, then put piece back
+                for (int i = 0; i < potentialMovesEnd.length; i++) {
+                    boolean squareSafe = true;
+                    int startSquare = potentialMovesStart[i];
+                    int testSquare = potentialMovesEnd[i];
+                    position[startSquare-1] = 0;
+                    for (byte b : legalMoves(targetKing+1)) {
+                        if (b == testSquare) {
+                            squareSafe = false;
+                            break;
+                        }
+                    }
+                    //test for stalemate: make move, try gameStatus(), undo move
+                    position[testSquare-1] = position[startSquare-1];
+                    position[startSquare-1] = 0;
+                    position[64] = 1 - position[64];
+                    try {gameStatus();} catch (GameEndsException g) {if (g.getMessage().equals("0")) squareSafe = false;}
+                    position[startSquare-1] = position[testSquare-1];
+                    position[testSquare-1] = 0;
+                    position[64] = 1 - position[64];
+                    if (squareSafe) return new int[]{possibleEval, startSquare, testSquare};
+                }
+                //no cutoff squares are safe! Move a piece to the far edge of the board
+                for (int pieceSquare : pieces) {
+                    // check piece move for stalemate, then move to the next piece if the candidate causes stalemate
+                    int potentialMove = 0;
+                    switch (closest) {
+                        case 1:
+                        case 3:
+                            //cutting off along a rank, so move to the furthest file from the king
+                            if (kingFile >= 4) /*move to a-file*/ potentialMove = pieceSquare - (pieceSquare % 8);
+                            else /*move to h-file*/ potentialMove = pieceSquare - (pieceSquare % 8) + 7;
+                            break;
+                        case 2:
+                        case 4:
+                            if (kingRank >= 4) /*move to 1st rank*/ potentialMove = pieceSquare % 8;
+                            else /* move to 8th rank*/ potentialMove = 56 + pieceSquare % 8;
+                            break;
+                        default: break;
+                    }
+                    //test for stalemate
+                    position[potentialMove] = position[pieceSquare];
+                    position[pieceSquare] = 0;
+                    position[64] = 1 - position[64];
+                    try {gameStatus();} catch (GameEndsException g) {if (g.getMessage().equals("0")) continue;}
+                    position[pieceSquare] = position[potentialMove];
+                    position[potentialMove] = 0;
+                    position[64] = 1 - position[64];
+                    return new int[]{possibleEval, pieceSquare+1, potentialMove+1};
+                }
+                //every single far-edge move causes stalemate! Unlucky
+                //just make a move and hope for the best
+            }
         }
         int alphaOriginal = alpha;
         int betaOriginal = beta;
@@ -1783,14 +1940,27 @@ class Reference {
         //5ply, d4 d5 c4 e6 
         Map.entry("rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 1 3", "Depth 2147483647\nEvaluation: 0.2\nBest move: g8f6") // d4 d5 c4 e6 Nc3
     );
-    private static double distance(int square1, int square2) {
-        int x1 = square1 % 8;
-        int y1 = (square1 - x1) / 8;
-        int x2 = square2 % 8;
-        int y2 = (square2 - x2) / 8;
-        return Math.hypot(x2 - x1, y2 - y1);
+    static int closestEdgeRank(int square) {
+        int rank = square / 8;
+        if (rank >= 4) return 7;
+        return 0;
     }
-
+    static int closestEdgeFile(int square) {
+        int file = square % 8;
+        if (file >= 4) return 7;
+        return 0;
+    }
+    static int closestEdge(int square) {
+        //1 = 1st rank, 2 = h-file, 3 = 9th rank, 4 = a-file
+        int rank = square / 8;
+        int file = square % 8;
+        int distances1 = rank, distances2 = 7 - file, distances3 = 7 - rank, distances4 = file;
+        int minimum = Math.min(distances1, Math.min(distances2, Math.min(distances3, distances4)));
+        if (minimum == distances1) return 1;
+        if (minimum == distances2) return 2;
+        if (minimum == distances3) return 3;
+        return 4;
+    }
     private static long[] bitSplit(long bits) {
         long[] output = new long[Long.bitCount(bits)];
         int i = 0;
@@ -1969,8 +2139,6 @@ class Reference {
         0b1011111101000000010000000100000001000000010000000100000001000000L,
         0b0111111110000000100000001000000010000000100000001000000010000000L
     };
-    //static Map<Integer, Map<Long, Long>> bishopBitboards = new HashMap<>();
-    //static Map<Integer, Map<Long, Long>> rookBitboards = new HashMap<>();
     private static Map<Long, Long>[] bishopBitboards = new Map[64];
     private static Map<Long, Long>[] rookBitboards = new Map[64];
     static long serialize(int[] board) {
@@ -1999,30 +2167,6 @@ class Reference {
         if (squareX >= 0 && squareX < 8 && squareY >= 0 && squareY < 8) {
             where[square] |= (1L << (squareY * 8 + squareX));
         }
-    }
-    private static int distanceToEdge(int squareX, int squareY, int dx, int dy) {
-        int distanceX = 0, distanceY = 0;
-        switch (dx) {
-            case 1:
-                distanceX = 7 - squareX;
-                break;
-            case -1:
-                distanceX = squareX;
-                break;
-            default:
-                throw new IllegalArgumentException("from Reference static method distanceToEdge");
-        }
-        switch (dy) {
-            case 1:
-                distanceY = 7 - squareY;
-                break;
-            case -1:
-                distanceY = squareY;
-                break;
-            default:
-                throw new IllegalArgumentException("from Reference static method distanceToEdge");
-        }
-        return Math.min(distanceX, distanceY);
     }
     private static long fill(int square, long pieces, int[] dx, int[] dy) {
         long output = 1L << square;
