@@ -4,9 +4,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.NoSuchElementException;
 import java.util.Arrays;
 import java.util.Map;
-import java.util.HashMap;
-import java.util.Set;
-import java.util.HashSet;
 import java.util.Random;
 import java.util.Comparator;
 import java.lang.Math;
@@ -16,6 +13,13 @@ public class ChessProject {
         /*
         PASTE INTO TERMINAL:
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\ChessProject.java"
+
+        TO DO:
+        update
+        legalMovesBasic
+        makeMove
+        restore
+
         */
         try {
             run();
@@ -37,7 +41,7 @@ public class ChessProject {
             System.out.println(message);
         } catch (InvalidFENException b) {
             printRed(b.getMessage());
-        } 
+        }
     }
     static long nodes = 0L;
     static int getTime() {
@@ -246,10 +250,10 @@ public class ChessProject {
         return parseNumber(start) + parseNumber(end);
     }
     static int getX(int square) {
-        return (square % 8 == 0) ? 8 : square % 8;
+        return (square - 1) % 8 + 1;
     }
     static int getY(int square) {
-        return (square % 8 == 0) ? square / 8 : square / 8 + 1;
+        return (square - 1) / 8 + 1;
     }
     static int translate(int square, int x, int y) {
         if (getX(square) + x > 8 || getX(square) + x < 1) {
@@ -310,20 +314,38 @@ public class ChessProject {
     static boolean color(int piece) {
         return (piece % 2) == 1;
     }
+    static int getPiece(long[] boards, int square) {
+        if (square == 0) return 0;
+        for (int i = 0; i < 12; i++) {
+            if ((boards[i] & (1L << (square - 1))) != 0) return (i+1);
+        }
+        return 0;
+    }
 }
 class Position {
-    int[] position; //can't use byte[] because arithmetic operations will be performed
+    int[] position = new int[7];
     long currentZobrist;
     long[] pieceBoard = new long[12];
     int limit, maxDepth;
-    int[][] undoStack = new int[50][72];
+    long[][] undoStackPieces = new long[50][12];
+    int[][] undoStackData = new int[50][7];
     int slot = 0;
     int undoDeep = 0;
-    //killer moves
     int[] killerMoves = new int[50];
-    //history
     int[][] history = new int[500][10];
     int historyStored = 0;
+    Position(int[] setup, int timeLimit, int depth) {
+        System.arraycopy(setup, 64, this.position, 0, 7);
+        this.limit = timeLimit;
+        this.maxDepth = depth;
+        for (int i = 0; i < 64; i++) {
+            if (setup[i] != 0) {
+                this.pieceBoard[setup[i] - 1] |= (1L << i);
+            }
+            update(i+1);
+        }
+        this.currentZobrist = Reference.getZobrist(pieceBoard, position);
+    }
     void sortHistory() {
         Arrays.sort(history, 0, historyStored, Comparator.comparingInt((int[] row) -> Reference.countNonzeros(row)).reversed());
     }
@@ -362,9 +384,9 @@ class Position {
     long[] zobristStorage = new long[Reference.length];
     int[] evals = new int[Reference.length]; //in decipawns
     int[][] otherInfo = new int[Reference.length][4]; //best move from, best move to, depth searched, bound
-    void store(int[] pos, int evaluation, int bestStart, int bestEnd, int depth, int bound) {
+    void store(int evaluation, int bestStart, int bestEnd, int depth, int bound) {
         try {
-            zobristStorage[slot] = Reference.getZobrist(position);
+            zobristStorage[slot] = currentZobrist;
             evals[slot] = evaluation;
             otherInfo[slot][0] = bestStart;
             otherInfo[slot][1] = bestEnd;
@@ -407,11 +429,8 @@ class Position {
     byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
     int bishopPairBonus(boolean tactical) {
-        int whiteBishops = 0, blackBishops = 0;
-        for (int i = 0; i < 64; i++) {
-            if (position[i] == 7) whiteBishops++;
-            if (position[i] == 8) blackBishops++;
-        }
+        int whiteBishops = Long.bitCount(pieceBoard[6]);
+        int blackBishops = Long.bitCount(pieceBoard[7]);
         int whiteBonus = (whiteBishops >= 2 && tactical) ? 2 : (whiteBishops >= 2 && !tactical) ? 1 : 0;
         int blackBonus = (blackBishops >= 2 && tactical) ? -2 : (blackBishops >= 2 && !tactical) ? -1 : 0;
         return whiteBonus + blackBonus;
@@ -436,17 +455,17 @@ class Position {
             outputTactical += pieceActivity[i] + material[i] + centralControl[i]  + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
             outputNontactical += material[i] + centralControl[i] + space[i] + outposts[i] + (pieceActivity[i] + kingSafety[i] + rooksSeventh[i]) / 3;
         }
-        return (tactical ? outputTactical : outputNontactical) + ((position[64] == 1) ? 1 : -1) + bishopPairBonus(tactical);
+        return (tactical ? outputTactical : outputNontactical) + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(tactical);
     }
     int activePieces() {
         //test if both sides have a lot of really active pieces
         //if true, then currentCount gives priority to piece activity, king safety, bishop pair, active rooks, if not, give priority to space, outposts
         int reallyActive = 0;
-        for (int i = 0; i < 64; i++) {
-            int modifier = (ChessProject.color(position[i])) ? 1 : -1;
-            if (pieceActivity[i] * modifier >= 8) {
-                reallyActive++;
-            }
+        for (int i : Reference.unserialize(occupiedSquares(true))) {
+            if (pieceActivity[i] >= 8) reallyActive++;
+        }
+        for (int i : Reference.unserialize(occupiedSquares(false))) {
+            if (pieceActivity[i] <= -8) reallyActive++;
         }
         return reallyActive;
     }
@@ -458,11 +477,11 @@ class Position {
         space[square-1] = 0;
         rooksSeventh[square-1] = 0;
         outposts[square-1] = 0;
-        int piece = getPiece(square);
+        int piece = ChessProject.getPiece(pieceBoard, square);
         if (piece == 0) return;
         int modifier = (ChessProject.color(piece)) ? 1 : -1;
         int sameColorPawn = (23 - modifier) / 2;
-        int[] pieceVision = Reference.unserialize(Reference.getBitboard(square-1, position, piece));
+        int[] pieceVision = Reference.unserialize(Reference.getBitboard(square-1, occupiedSquares(), piece));
         for (int s : pieceVision) {
             if (s == 27 || s == 28 || s == 35 || s == 36) {
                 centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
@@ -483,12 +502,12 @@ class Position {
                 //knight outposts typically only apply on 5th and 6th rank (white), 4th and 3rd rank (black)
                 if (ChessProject.getX(square) >= 3 && ChessProject.getX(square) <= 6) {
                     //center files, which are more valuable
-                    if (getPiece(ChessProject.translate(square, 1, -modifier)) == sameColorPawn || getPiece(ChessProject.translate(square, -1, -modifier)) == sameColorPawn) {
+                    if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, -modifier)) || piecePresent(sameColorPawn, ChessProject.translate(square, -1, -modifier))) {
                         outposts[square-1] = (byte) (modifier * 8);
                     }
                 } else {
                     // flank files
-                    if (getPiece(ChessProject.translate(square, 1, -modifier)) == sameColorPawn || getPiece(ChessProject.translate(square, -1, -modifier)) == sameColorPawn) {
+                    if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, -modifier)) || piecePresent(sameColorPawn, ChessProject.translate(square, -1, -modifier))) {
                         outposts[square-1] = (byte) (modifier * 4);
                     }
                 }
@@ -500,13 +519,13 @@ class Position {
                 pieceActivity[square-1] = (byte) (modifier * (10 - Math.round(proximityToCenter * 1.7)));
             } else {
                 kingSafety[square-1] = (byte) (modifier * (Math.round(proximityToCenter * 1.7) - 10));
-                if (getPiece(ChessProject.translate(square, 0, modifier)) == sameColorPawn) {
+                if (piecePresent(sameColorPawn, ChessProject.translate(square, 0, modifier))) {
                     kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 10); //pawn in front of king
                 }
-                if (getPiece(ChessProject.translate(square, 1, modifier)) == sameColorPawn) {
+                if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, modifier))) {
                     kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5);
                 }
-                if (getPiece(ChessProject.translate(square, -1, modifier)) == sameColorPawn) {
+                if (piecePresent(sameColorPawn, ChessProject.translate(square, -1, modifier))) {
                     kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5);
                 }
             }
@@ -523,7 +542,7 @@ class Position {
             int square1 = (piece == 7) ? 36 : 28;
             int square2 = (piece == 7) ? 37 : 29;
             if (square == square1 || square == square2) {
-                if (getPiece(ChessProject.translate(square, 1, -modifier)) == sameColorPawn || getPiece(ChessProject.translate(square, -1, -modifier)) == sameColorPawn) {
+                if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, -modifier)) || piecePresent(sameColorPawn, ChessProject.translate(square, -1, -modifier))) {
                     outposts[square-1] = (byte) (modifier * 5);
                 }
             }
@@ -545,53 +564,55 @@ class Position {
                     break;
             }
             if (endgame()) {
-                for (int s : passedPawns()) {
-                    if (square == s) {
-                        modifier *= 5;
-                        break;
-                    }
+                long[] data = passedPawns();
+                if (piece == 11) {
+                    if ((data[0] & (1L << (square - 1))) != 0) modifier *= 5; //passer
+                    if ((data[2] & (1L << (square - 1))) != 0) modifier *= 3; //potential passer
+                    if ((data[4] & (1L << (square - 1))) != 0) modifier *= 2; //neighbors a potential passer
+                }
+                if (piece == 12) {
+                    if ((data[1] & (1L << (square - 1))) != 0) modifier *= 5;
+                    if ((data[3] & (1L << (square - 1))) != 0) modifier *= 3;
+                    if ((data[5] & (1L << (square - 1))) != 0) modifier *= 2;
                 }
             }
             space[square-1] = (byte) Math.round(modifier * addition);
         }
     }
-    Position(int[] setup, int timeLimit, int depth) {
-        this.position = setup;
-        this.limit = timeLimit;
-        this.maxDepth = depth;
-        this.currentZobrist = Reference.getZobrist(setup);
-        for (int i = 0; i < 64; i++) {
-            if (setup[i] != 0) {
-                pieceBoard[setup[i] - 1] |= (1L << i);
-            }
-            update(i+1);
-        }
+    long occupiedSquares() {
+        return occupiedSquares(true) | occupiedSquares(false);
     }
-    int getPiece(int square) {
-        if (square == 0) {
-            //square does not exist
-            return -1;
-        }
-        return position[square - 1];
+    long occupiedSquares(boolean color) {
+        return (color ? (
+            pieceBoard[0] | pieceBoard[2] | pieceBoard[4] | pieceBoard[6] | pieceBoard[8] | pieceBoard[10]
+        ) : (
+            pieceBoard[1] | pieceBoard[3] | pieceBoard[5] | pieceBoard[7] | pieceBoard[9] | pieceBoard[11]
+        ));
+    }
+    boolean isEmpty(int square) {
+        return (occupiedSquares() & (1L << (square-1))) == 0;
+    }
+    boolean piecePresent(int piece, int square) {
+        return (pieceBoard[piece-1] & (1L << (square-1))) != 0;
     }
     int kingSquare() {
-        int target = 2 - position[64];
-        for (int i = 0; i < 64; i++) {
-            if (position[i] == target) {
-                return i+1;
-            }
-        }
+        if (pieceBoard[1-position[0]] == 0) {
         //HOPEFULLY this never happens
-        String message = "Looking for " + ((position[64] == 1) ? "white" : "black") + " king but found none\nThis is the current position:\n";
-        display();
-        throw new RuntimeException(message);
+            String message = "Looking for " + ((position[0] == 1) ? "white" : "black") + " king but found none\nThis is the current position:\n";
+            display();
+            throw new RuntimeException(message);
+        }
+        return Long.numberOfTrailingZeros(pieceBoard[1-position[0]]);
     }
     void display() {
+        char[] output = new char[64];
+        for (int i = 0; i < 12; i++) {
+            for (int s : Reference.unserialize(pieceBoard[i])) output[s] = ChessProject.getChar(i+1);
+        }
         for (int i = 7; i >= 0; i--) {
             for (int j = 0; j < 8; j++) {
-                String chr = Character.toString(ChessProject.getChar(position[i * 8 + j]));
-                String output = ("0".equals(chr)) ? "  " : chr + " ";
-                System.out.print(output);
+                System.out.print((output[i * 8 + j] == 0) ? " " : output[i * 8 + j]);
+                System.out.print(" ");
             }
             System.out.println("");
         }
@@ -635,187 +656,120 @@ class Position {
         System.out.println(activePieces());
     }
     // Hot paths!
-    byte[][] pad = new byte[10][1000]; 
-    /*
-    avoid creating tons of new byte[] instances
-    10 pads with 1000 elements each
-    */
-    void clearPad(int where) {
-        for (int i = 0; i < 1000; i++) {
-            pad[where][i] = 0;
-        }
-    }
-    byte[] retrieve(int index) {
-        //CAUTION: be careful calling this
-        return Arrays.copyOf(pad[index], length(index));
-    }
-    int length(int index) {
-        //as long as the last element is not zero
-        for (int output = 1000; output > 0; output--) {
-            if (pad[index][output-1] != 0) {
-                return output;
-            }
-        }
-        return 0;
-    }
-    void compilePad(int stop/*inclusive*/) {
-        //takes all arrays in pad and stacks them together in pad[0]
-        int index = length(0);
-        for (int i = 1; i <= stop; i++) {
-            for (int j = 0; j < length(i); j++) {
-                pad[0][index] = pad[i][j];
-                index++;
-            }
-            clearPad(i);
-        }
-    }
-    void squaresTo(int square, int directionX, int directionY, boolean colorStop, int where) {
-        clearPad(where);
-        for (int i = 1; i < 8; i++) {
-            int newSquare = ChessProject.translate(square, directionX * i, directionY * i);
-            if (newSquare == 0) {
-                break;
-            }
-            if (getPiece(newSquare) == 0) {
-                pad[where][i-1] = (byte) newSquare;
-            } else {
-                if (ChessProject.color(getPiece(newSquare)) != colorStop) {
-                    pad[where][i-1] = (byte) newSquare;
-                }
-                break;
-            }
-        }
-    }
-    void legalMovesBasic(int square) {
-        clearPad(0);
-        int piece = getPiece(square);
+    long legalMovesBasic(int square) {
+        long output = 0L;
+        int piece = ChessProject.getPiece(pieceBoard, square);
         boolean color = ChessProject.color(piece);
-        int index = 0;
         if (piece == 11) {
             //pawn
             int candidate = ChessProject.translate(square, 1, 1);
-            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 2) {
-                pad[0][index] = (byte) candidate;
-                index++;
+            int occupied = ChessProject.getPiece(pieceBoard, candidate);
+            if (candidate != 0 && occupied != 0 && ChessProject.color(occupied) != color && occupied != 2) {
+                output |= (1L << (candidate-1));
             }
             candidate = ChessProject.translate(square, -1, 1);
-            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 2) {
-                pad[0][index] = (byte) candidate;
-                index++;
+            occupied = ChessProject.getPiece(pieceBoard, candidate);
+            if (candidate != 0 && occupied != 0 && ChessProject.color(occupied) != color && occupied != 2) {
+                output |= (1L << (candidate-1));
             }
             candidate = ChessProject.translate(square, 0, 1);
-            if (candidate != 0 && getPiece(candidate) == 0) {
-                pad[0][index] = (byte) candidate;
-                index++;
+            occupied = ChessProject.getPiece(pieceBoard, candidate);
+            if (candidate != 0 && occupied == 0) {
+                output |= (1L << (candidate-1));
                 candidate = ChessProject.translate(square, 0, 2);
-                if (candidate != 0 && getPiece(candidate) == 0 && square > 8 && square <= 16) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
+                occupied = ChessProject.getPiece(pieceBoard, candidate);
+                if (candidate != 0 && occupied == 0 && square > 8 && square <= 16) {
+                    output |= (1L << (candidate-1));
                 }
             }
-            if (position[69] != 0 && getPiece(position[69]) == 0 &&
-                    (position[69] == ChessProject.translate(square, 1, 1) || position[69] == ChessProject.translate(square, -1, 1))) {
-                pad[0][index] = (byte) position[69];
-                index++;
+            if (position[5] != 0 && (occupiedSquares() & (1L << (position[5]-1))) == 0 &&
+                    (position[5] == ChessProject.translate(square, 1, 1) || position[5] == ChessProject.translate(square, -1, 1))) {
+                output |= (1L << (position[5]-1));
             }
         } else if (piece == 12) {
             //pawn
             int candidate = ChessProject.translate(square, 1, -1);
-            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 1) {
-                pad[0][index] = (byte) candidate;
-                index++;
+            int occupied = ChessProject.getPiece(pieceBoard, candidate);
+            if (candidate != 0 && occupied != 0 && ChessProject.color(occupied) != color && occupied != 1) {
+                output |= (1L << (candidate-1));
             }
             candidate = ChessProject.translate(square, -1, -1);
-            if (candidate != 0 && getPiece(candidate) != 0 && ChessProject.color(getPiece(candidate)) != color && getPiece(candidate) != 1) {
-                pad[0][index] = (byte) candidate;
-                index++;
+            occupied = ChessProject.getPiece(pieceBoard, candidate);
+            if (candidate != 0 && occupied != 0 && ChessProject.color(occupied) != color && occupied != 1) {
+                output |= (1L << (candidate-1));
             }
             candidate = ChessProject.translate(square, 0, -1);
-            if (candidate != 0 && getPiece(candidate) == 0) {
-                pad[0][index] = (byte) candidate;
-                index++;
+            occupied = ChessProject.getPiece(pieceBoard, candidate);
+            if (candidate != 0 && occupied == 0) {
+                output |= (1L << (candidate-1));
                 candidate = ChessProject.translate(square, 0, -2);
-                if (getPiece(candidate) == 0 && square > 48 && square <= 56) {
-                    pad[0][index] = (byte) candidate;
-                    index++;
+                occupied = ChessProject.getPiece(pieceBoard, candidate);
+                if (occupied == 0 && square > 48 && square <= 56) {
+                    output |= (1L << (candidate-1));
                 }
             }
-            if (position[69] != 0 && getPiece(position[69]) == 0 &&
-                    (position[69] == ChessProject.translate(square, 1, -1) || position[69] == ChessProject.translate(square, -1, -1))) {
-                pad[0][index] = (byte) position[69];
-                index++;
+            if (position[5] != 0 && (occupiedSquares() & (1L << (position[5]-1))) == 0 &&
+                    (position[5] == ChessProject.translate(square, 1, -1) || position[5] == ChessProject.translate(square, -1, -1))) {
+                output |= (1L << (position[5]-1));
             }
         } else {
-            int[] squares = Reference.unserialize(Reference.getBitboard(square-1, position, piece));
+            int[] squares = Reference.unserialize(Reference.getBitboard(square-1, occupiedSquares(), piece));
             for (int s : squares) {
-                if (position[s] == 0 || (ChessProject.color(position[s]) != color && position[s] != 1 && position[s] != 2)) {
-                    pad[0][index] = (byte) (s + 1);
-                    index++;
+                int p = ChessProject.getPiece(pieceBoard, s+1);
+                if (p == 0 || (ChessProject.color(p) != color && p != 1 && p != 2)) {
+                    output |= (1L << s);
                 }
             }
         }
+        return output;
     }
     void makeMove(int start, int end) {
-        currentZobrist = Reference.updateZobrist(position, currentZobrist, start, end);
-        for (int i = 0; i < 72; i++) {
-            undoStack[undoDeep][i] = position[i];
-        }
+        currentZobrist = Reference.updateZobrist(pieceBoard, position, currentZobrist, start, end);
+        System.arraycopy(pieceBoard, 0, undoStackPieces[undoDeep], 0, 12);
+        System.arraycopy(position, 0, undoStackData[undoDeep], 0, 7);
         undoDeep++;
-        int piece = getPiece(start);
-        int captured = getPiece(end);
-        boolean epBefore = position[69] != 0;
+        int piece = ChessProject.getPiece(pieceBoard, start);
+        int captured = ChessProject.getPiece(pieceBoard, end);
+        boolean epBefore = position[5] != 0;
         if (piece != 11 && piece != 12) {
-            position[69] = 0;
+            position[5] = 0;
         }
-        position[70] = position[70] + 1;
+        position[6]++;
         if (captured != 0) {
-            position[70] = 0;
-            if (end == 1 && captured == 5) position[66] = 0;
-            if (end == 8 && captured == 5) position[65] = 0;
-            if (end == 57 && captured == 6) position[68] = 0;
-            if (end == 64 && captured == 6) position[67] = 0;
+            position[6] = 0;
+            if (end == 1 && captured == 5) position[2] = 0;
+            if (end == 8 && captured == 5) position[1] = 0;
+            if (end == 57 && captured == 6) position[4] = 0;
+            if (end == 64 && captured == 6) position[3] = 0;
             pieceBoard[captured-1] ^= (1L << (end - 1));
         }
-        if (position[64] == 0) {
-            position[71] = position[71] + 1;
-        }
-        position[end-1] = piece;
-        position[start-1] = 0;
         pieceBoard[piece-1] |= (1L << (end - 1));
         pieceBoard[piece-1] ^= (1L << (start - 1));
         switch (piece) {
             case 1:
-                position[65] = 0;
-                position[66] = 0;
+                position[1] = 0;
+                position[2] = 0;
                 if (end == 3) {
                     //white castle long
-                    position[0] = 0;
-                    position[3] = 5;
                     pieceBoard[4] |= (1L << 3);
                     pieceBoard[4] ^= 1L;
                 }
                 if (end == 7) {
                     //white castle short
-                    position[7] = 0;
-                    position[5] = 5;
                     pieceBoard[4] |= (1L << 5);
                     pieceBoard[4] ^= (1L << 7);
                 }
                 break;
             case 2:
-                position[67] = 0;
-                position[68] = 0;
+                position[3] = 0;
+                position[4] = 0;
                 if (end == 59) {
                     //black castle long
-                    position[56] = 0;
-                    position[59] = 6;
                     pieceBoard[5] |= (1L << 59);
                     pieceBoard[5] ^= (1L << 56);
                 }
                 if (end == 63) {
                     //black castle short
-                    position[63] = 0;
-                    position[61] = 6;
                     pieceBoard[5] |= (1L << 61);
                     pieceBoard[5] ^= (1L << 63);
                 }
@@ -823,245 +777,193 @@ class Position {
             case 5:
                 if (start == 1) {
                     //a1
-                    position[66] = 0;
+                    position[2] = 0;
                 } else if (start == 8) {
                     //h1
-                    position[65] = 0;
+                    position[1] = 0;
                 }
                 break;
             case 6:
                 if (start == 57) {
                     //a8
-                    position[68] = 0;
+                    position[4] = 0;
                 } else if (start == 64) {
                     //h8
-                    position[67] = 0;
+                    position[3] = 0;
                 }
                 break;
             case 11:
                 //white pawn
                 //worry about en passant and promotion, assume all promotions go to queens
-                if (end == position[69]) {
+                if (end == position[5]) {
                     //en passant!
                     int squareid = ChessProject.translate(end, 0, -1) - 1;
                     pieceBoard[11] ^= (1L << squareid);
-                    position[squareid] = 0;
                 }
-                position[69] = 0;
+                position[5] = 0;
                 if (start > 8 && start <= 16 && end > 24 && end <= 32) {
                     //pawn move 2 squares, check for en passant
-                    if (getPiece(ChessProject.translate(end, 1, 0)) == 12 || getPiece(ChessProject.translate(end, -1, 0)) == 12) {
-                        position[69] = ChessProject.translate(start, 0, 1);
+                    if (piecePresent(12, ChessProject.translate(end, 1, 0)) || piecePresent(12, ChessProject.translate(end, -1, 0))) {
+                        position[5] = ChessProject.translate(start, 0, 1);
                     }
                 }
                 if (start > 48 && start <= 56) {
                     //promotion
-                    position[end-1] = 3;
                     pieceBoard[10] ^= (1L << end-1);
                     pieceBoard[2] |= (1L << end-1);
                 }
-                position[70] = 0;
+                position[6] = 0;
                 break;
             case 12:
                 //black pawn
-                if (end == position[69]) {
+                if (end == position[5]) {
                     //en passant!
                     int squareid = ChessProject.translate(end, 0, 1) - 1;
                     pieceBoard[10] ^= (1L << squareid);
-                    position[squareid] = 0;
                 }
-                position[69] = 0;
+                position[5] = 0;
                 if (start > 48 && start <= 56 && end > 32 && end <= 40) {
                     //pawn move 2 squares, check for en passant
-                    if (getPiece(ChessProject.translate(end, 1, 0)) == 11 || getPiece(ChessProject.translate(end, -1, 0)) == 11) {
-                        position[69] = ChessProject.translate(start, 0, -1);
+                    if (piecePresent(11, ChessProject.translate(end, 1, 0)) || piecePresent(11, ChessProject.translate(end, -1, 0))) {
+                        position[5] = ChessProject.translate(start, 0, -1);
                     }
                 }
                 if (start > 8 && start <= 16) {
                     //promotion
-                    position[end-1] = 4;
                     pieceBoard[11] ^= (1L << end-1);
                     pieceBoard[3] |= (1L << end-1);
                 }
-                position[70] = 0;
+                position[6] = 0;
                 break;
             default:
                 break;
         }
-        position[64] = 1 - position[64];
+        position[0] = 1 - position[0];
     }
     void restore() {
         undoDeep--;
-        int[] previousPosition = (undoDeep >= 0) ? undoStack[undoDeep] : new int[72]; //safeguard, shouldn't ever happen
-        currentZobrist = Reference.getZobrist(previousPosition);
-        for (int i = 0; i < 12; i++) {
-            pieceBoard[i] = 0L;
-        }
-        for (int i = 0; i < 72; i++) {
-            position[i] = previousPosition[i];
-            if (i >= 64) continue;
-            if (position[i] != 0) {
-                pieceBoard[position[i] - 1] |= (1L << i);
-            }
-        }
+        System.arraycopy(undoStackPieces[undoDeep], 0, pieceBoard, 0, 12);
+        System.arraycopy(undoStackData[undoDeep], 0, position, 0, 7);
+        currentZobrist = Reference.getZobrist(pieceBoard, position);
     }
-    byte[] legalMoves(int square) {
-        legalMovesBasic(square);
-        byte[] basicMoves = retrieve(0);
-        clearPad(8);
-        int i = 0;
-        for (byte move : basicMoves) {
-            makeMove(square, move);
-            position[64] = 1 - position[64];
-            boolean checkedAfterMove = inCheck();
-            if (!checkedAfterMove) {
-                pad[8][i] = move;
-                i++;
+    long legalMoves(int square) {
+        long template = legalMovesBasic(square);
+        for (int move : Reference.unserialize(template)) {
+            makeMove(square, move + 1);
+            position[0] = 1 - position[0];
+            if (inCheck()) {
+                template ^= (1L << move);
             }
-            position[64] = 1 - position[64];
+            position[0] = 1 - position[0];
             restore();
         }
         if (!inCheck()) {
             if (square == 5) {
-                if (position[65] == 1 && getPiece(8) == 5 && getPiece(6) == 0 && getPiece(7) == 0) {
+                if (position[1] == 1 && ((pieceBoard[4] & (1L << 7)) != 0) && isEmpty(6) && isEmpty(7)) {
                     boolean allowed = true;
-                    position[4] = 0;
-                    position[5] = 1;
                     pieceBoard[0] = (1L << 5);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[5] = 0;
-                    position[6] = 1;
                     pieceBoard[0] = (1L << 6);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[6] = 0;
-                    position[4] = 1;
                     pieceBoard[0] = (1L << 4);
                     if (allowed) {
-                        pad[8][i] = 7;
-                        i++;
+                        template |= (1L << 6);
                     }    
                 }
-                if (position[66] == 1 && getPiece(1) == 5 && getPiece(4) == 0 && getPiece(3) == 0 && getPiece(2) == 0) {   
+                if (position[2] == 1 && ((pieceBoard[4] & 1L) != 0) && isEmpty(4) && isEmpty(3) && isEmpty(2)) {   
                     boolean allowed = true; 
-                    position[4] = 0;
-                    position[3] = 1;
                     pieceBoard[0] = (1L << 3);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[3] = 0;
-                    position[2] = 1;
                     pieceBoard[0] = (1L << 2);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[2] = 0;
-                    position[4] = 1;
                     pieceBoard[0] = (1L << 4);
                     if (allowed) {
-                        pad[8][i] = 3;
-                        i++;
+                        template |= (1L << 2);
                     }
                 }
             }
             if (square == 61) {
-                if (position[67] == 1 && getPiece(64) == 6 && getPiece(62) == 0 && getPiece(63) == 0) {
+                if (position[3] == 1 && ((pieceBoard[5] & (1L << 63)) != 0) && isEmpty(62) && isEmpty(63)) {
                     boolean allowed = true;
-                    position[60] = 0;
-                    position[61] = 2;
                     pieceBoard[1] = (1L << 61);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[61] = 0;
-                    position[62] = 2;
                     pieceBoard[1] = (1L << 62);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[62] = 0;
-                    position[60] = 2;
                     pieceBoard[1] = (1L << 60);
                     if (allowed) {
-                        pad[8][i] = 63;
-                        i++;
+                        template |= (1L << 62);
                     }    
                 }
-                if (position[68] == 1 && getPiece(57) == 6 && getPiece(60) == 0 && getPiece(59) == 0 && getPiece(58) == 0) {   
+                if (position[4] == 1 && ((pieceBoard[5] & (1L << 56)) != 0) && isEmpty(60) && isEmpty(59) && isEmpty(58)) {   
                     boolean allowed = true; 
-                    position[60] = 0;
-                    position[59] = 2;
                     pieceBoard[1] = (1L << 59);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[59] = 0;
-                    position[58] = 2;
                     pieceBoard[1] = (1L << 58);
                     if (inCheck()) {
                         allowed = false;
                     }
-                    position[58] = 0;
-                    position[60] = 2;
                     pieceBoard[1] = (1L << 60);
                     if (allowed) {
-                        pad[8][i] = 59;
-                        i++;
+                        template |= (1L << 58);
                     }
                 }
             }
         }
-        return retrieve(8);
+        return template;
     }
     boolean inCheck() {
-        int king = kingSquare() - 1;
-        return (position[64] == 1) ? (
+        int king = kingSquare();
+        long occupied = occupiedSquares();
+        return (position[0] == 1) ? (
             //test black pieces
-            (Reference.getBitboard(king, position, 2) & pieceBoard[1]) != 0 ||
-            (Reference.getBitboard(king, position, 6) & (pieceBoard[5] | pieceBoard[3])) != 0 ||
-            (Reference.getBitboard(king, position, 8) & (pieceBoard[7] | pieceBoard[3])) != 0 ||
-            (Reference.getBitboard(king, position, 10) & pieceBoard[9]) != 0 ||
-            (Reference.getBitboard(king, position, 11) & pieceBoard[11]) != 0
+            (Reference.getBitboard(king, occupied, 2) & pieceBoard[1]) != 0 ||
+            (Reference.getBitboard(king, occupied, 6) & (pieceBoard[5] | pieceBoard[3])) != 0 ||
+            (Reference.getBitboard(king, occupied, 8) & (pieceBoard[7] | pieceBoard[3])) != 0 ||
+            (Reference.getBitboard(king, occupied, 10) & pieceBoard[9]) != 0 ||
+            (Reference.getBitboard(king, occupied, 11) & pieceBoard[11]) != 0
         ) : (
             //test white pieces
-            (Reference.getBitboard(king, position, 1) & pieceBoard[0]) != 0 ||
-            (Reference.getBitboard(king, position, 5) & (pieceBoard[4] | pieceBoard[2])) != 0 ||
-            (Reference.getBitboard(king, position, 7) & (pieceBoard[6] | pieceBoard[2])) != 0 ||
-            (Reference.getBitboard(king, position, 9) & pieceBoard[8]) != 0 ||
-            (Reference.getBitboard(king, position, 12) & pieceBoard[10]) != 0
+            (Reference.getBitboard(king, occupied, 1) & pieceBoard[0]) != 0 ||
+            (Reference.getBitboard(king, occupied, 5) & (pieceBoard[4] | pieceBoard[2])) != 0 ||
+            (Reference.getBitboard(king, occupied, 7) & (pieceBoard[6] | pieceBoard[2])) != 0 ||
+            (Reference.getBitboard(king, occupied, 9) & pieceBoard[8]) != 0 ||
+            (Reference.getBitboard(king, occupied, 12) & pieceBoard[10]) != 0
         );
     }
     byte[][] generateMoves() {
-        clearPad(5);
-        clearPad(6);
         //this is the culmination of everything else above
+        long squares = occupiedSquares(position[0] == 1);
+        byte[] references = Reference.unserializeToBytes(squares);
+        int quantity = 0;
+        long[] moves = new long[64];
+        for (byte s : references) {
+            moves[s] = legalMoves(s+1);
+            quantity += Long.bitCount(moves[s]);
+        }
+        byte[][] output = new byte[2][quantity];
         int i = 0;
-        for (int j = 0; j < 64; j++) {
-            //checks all 64 squares
-            boolean color = ChessProject.color(position[j]);
-            boolean toMove = position[64] == 1;
-            
-            if (position[j] != 0 && color == toMove) {
-                //square is not empty and is of the color to move
-                byte[] moves = legalMoves(j+1);
-                if (moves.length > 0) {
-                    //piece has legal moves
-                    for (byte move : moves) {
-                        pad[5][i] = (byte) (j+1);
-                        pad[6][i] = move;
-                        i++;
-                    }
-                }
+        for (byte s : references) {
+            for (byte m : Reference.unserializeToBytes(moves[s])) {
+                output[0][i] = (byte) (s+1);
+                output[1][i] = (byte) (m+1);
+                i++;
             }
         }
-        byte[][] out = new byte[2][length(5)];
-        out[0] = retrieve(5);
-        out[1] = retrieve(6);
-        return out;
+        return output;
     }
     byte[][] sortMoves(byte[][] unsortedMoves) {
         sortHistory();
@@ -1093,11 +995,11 @@ class Position {
                     continue;
                 }
             }
-            int piece = getPiece(start);
+            int piece = ChessProject.getPiece(pieceBoard, start);
             boolean pieceColor = ChessProject.color(piece);
             int modifier = (pieceColor) ? 1 : -1;
-            int captured = getPiece(end);
-            boolean capture = captured != 0 || ((piece == 11 || piece == 12) && end == position[69]);
+            int captured = ChessProject.getPiece(pieceBoard, end);
+            boolean capture = captured != 0 || ((piece == 11 || piece == 12) && end == position[5]);
             boolean promotion = (piece == 11 && end >= 57) || (piece == 12 && end <= 8);
             //capture/promotion
             if (capture || promotion) {
@@ -1156,7 +1058,7 @@ class Position {
                 //punish pawn moves in front of king if !endgame()
                 if (!isEndgame) {
                     int king = (pieceColor) ? 1 : 2;
-                    if (getPiece(ChessProject.translate(start, 0, -modifier)) == king) {
+                    if (piecePresent(king, ChessProject.translate(start, 0, -modifier))) {
                         cumulative -= 15;
                     }
                 }
@@ -1187,11 +1089,8 @@ class Position {
         return new byte[][]{conversions1, conversions2};
     }
     boolean isTacticalMove(int start, int end) {
-        int piece = getPiece(start);
-        return getPiece(end) != 0
-            || ((piece == 11 || piece == 12) && end == position[69])
-            || (piece == 11 && end >= 57)
-            || (piece == 12 && end <= 8);
+        int piece = ChessProject.getPiece(pieceBoard, start);
+        return !isEmpty(end) || ((piece == 11 || piece == 12) && end == position[5]) || (piece == 11 && end >= 57) || (piece == 12 && end <= 8);
     }
     void gameStatus() throws GameEndsException {
         gameStatus(generateMoves());
@@ -1199,177 +1098,94 @@ class Position {
     void gameStatus(byte[][] moves) throws GameEndsException {
         if (moves[0].length == 0) {
             if (inCheck()) {
-                int out = (position[64] == 1) ? 2 : 1; //checkmate
+                int out = (position[0] == 1) ? 2 : 1; //checkmate
                 throw new GameEndsException(out);
             }
             throw new GameEndsException(0); //stalemate
         }
-        if (!sufficientMaterial() || position[71] >= 100) {
+        if (!sufficientMaterial() || position[6] >= 100) {
             throw new GameEndsException(0);
         }
     }
     boolean sufficientMaterial() {
-        int whiteBishops = 0, blackBishops = 0, whiteKnights = 0, blackKnights = 0, whitePieces = 0, blackPieces = 0;
-        for (int i = 0; i < 64; i++) {
-            switch (position[i]) {
-                case 0:
-                case 1:
-                case 2:
-                    break;
-                case 7:
-                    whiteBishops++;
-                    whitePieces++;
-                    break;
-                case 8:
-                    blackBishops++;
-                    blackPieces++;
-                    break;
-                case 9:
-                    whiteKnights++;
-                    whitePieces++;
-                    break;
-                case 10:
-                    blackKnights++;
-                    blackPieces++;
-                    break;
-                default:
-                    return true;
-            }
-        }
-        if (whitePieces == 2 && whiteKnights < 2) {
-            return true;
-        }
-        if (blackPieces == 2 && blackKnights < 2) {
-            return true;
-        } 
+        int whiteKnights = Long.bitCount(pieceBoard[8]), blackKnights = Long.bitCount(pieceBoard[9]),
+        whitePieces = Long.bitCount(occupiedSquares(true)), blackPieces = Long.bitCount(occupiedSquares(false));
+        if ((pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[10] | pieceBoard[11]) != 0) return true;
+        if (whitePieces == 2 && whiteKnights < 2) return true;
+        if (blackPieces == 2 && blackKnights < 2) return true;
         return false;
     }
     boolean endgame() {
         //if queens are on, return true if they're the only pieces (queen endgame)
         //if queens are off, return false if both pairs of rooks and one minor piece for each side is on (queenless middlegame)
-        boolean queens = false;
-        for (int i = 0; i < 64; i++) {
-            switch (position[i]) {
-                case 3:
-                case 4:
-                    queens = true;
-                    break;
-                default:
-                    break;
-            }
-            if (queens == true) break;
-        }
-        if (queens) {
-            for (int i = 0; i < 64; i++) {
-                switch (position[i]) {
-                    case 3:
-                    case 4:
-                    case 5:
-                    case 6:
-                    case 7:
-                    case 8:
-                    case 9:
-                    case 10:
-                        return false;
-                    default:
-                        break;
-                }
-            }
-            return true;
-        }
-        int rooks = 0;
-        boolean minorPieces = false;
-        for (int i = 0; i < 64; i++) {
-            switch (position[i]) {
-                case 5:
-                case 6:
-                    rooks++;
-                    break;
-                case 7:
-                case 8:
-                case 9:
-                case 10:
-                    minorPieces = true;
-                    break;
-                default:
-                    break;
-            }
-        }
-        return !(rooks >= 3 && minorPieces);
+        if ((pieceBoard[2] | pieceBoard[3]) != 0) return (pieceBoard[4] | pieceBoard[5] | pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[8]) == 0;
+        return !(Long.bitCount(pieceBoard[4] | pieceBoard[5]) >= 3 && Long.bitCount(pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) >= 2);
     }
     boolean pawnEndgame() {
         //if true, zugzwang may happen at some point -> cancel the null move prune
-        if (!endgame()) return false;
-        for (int i = 0; i < 64; i++) {
-            switch (position[i]) {
-                case 1:
-                case 2:
-                case 11:
-                case 12:
-                    break;
-                default:
-                    return false;  
+        return (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0;
+    }
+    long[] passedPawns() {
+        //passed pawns white + black, passed pawn candidates white + black, passed pawn candidate helpers white + black
+        long[] fileref = {
+            0x1010101010100L,
+            0x2020202020200L,
+            0x4040404040400L,
+            0x8080808080800L,
+            0x10101010101000L,
+            0x20202020202000L,
+            0x40404040404000L,
+            0x80808080808000L
+        };
+        boolean[] whitePawnFiles = new boolean[8],
+        blackPawnFiles = new boolean[8];
+        for (int i = 0; i < 8; i++) {
+            whitePawnFiles[i] = (pieceBoard[10] & fileref[i]) != 0;
+            blackPawnFiles[i] = (pieceBoard[11] & fileref[i]) != 0;
+        }
+        long[] output = new long[6];
+        int helpingNeighbors = 0, opposingNeighbors = 0;
+        for (int i = 0; i < 8; i++) {
+            if (whitePawnFiles[i] && !blackPawnFiles[i]) {
+                if (i != 0) {
+                    if (whitePawnFiles[i-1]) helpingNeighbors++;
+                    if (blackPawnFiles[i-1]) opposingNeighbors++;
+                }
+                if (i != 7) {
+                    if (whitePawnFiles[i+1]) helpingNeighbors++;
+                    if (blackPawnFiles[i+1]) opposingNeighbors++;
+                }
+                if (opposingNeighbors == 0) output[0] |= (pieceBoard[10] & fileref[i]);
+                else if (helpingNeighbors > opposingNeighbors) {
+                    output[2] |= (pieceBoard[10] & fileref[i]);
+                    if (i != 0 && whitePawnFiles[i-1]) output[4] |= (pieceBoard[10] & fileref[i-1]);
+                    if (i != 7 && whitePawnFiles[i+1]) output[4] |= (pieceBoard[10] & fileref[i+1]);
+                }
+            } else if (blackPawnFiles[i] && !whitePawnFiles[i]) {
+                if (i != 0) {
+                    if (blackPawnFiles[i-1]) helpingNeighbors++;
+                    if (whitePawnFiles[i-1]) opposingNeighbors++;
+                }
+                if (i != 7) {
+                    if (blackPawnFiles[i+1]) helpingNeighbors++;
+                    if (whitePawnFiles[i+1]) opposingNeighbors++;
+                }
+                if (opposingNeighbors == 0) output[1] |= (pieceBoard[11] & fileref[i]);
+                else if (helpingNeighbors > opposingNeighbors) {
+                    output[3] |= (pieceBoard[11] & fileref[i]);
+                    if (i != 0 && blackPawnFiles[i-1]) output[5] |= (pieceBoard[11] & fileref[i-1]);
+                    if (i != 7 && blackPawnFiles[i+1]) output[5] |= (pieceBoard[11] & fileref[i+1]);
+                }
             }
         }
-        return true;
-    }
-    int[] passedPawns() {
-        boolean[] whitePawnFiles = {false, false, false, false, false, false, false, false}, blackPawnFiles = {false, false, false, false, false, false, false, false};
-        for (int i = 0; i < 64; i++) {
-            if (position[i] == 11) whitePawnFiles[i % 8] = true;
-            if (position[i] == 12) blackPawnFiles[i % 8] = true;
-        }
-        boolean[] whitePassedFiles = {false, false, false, false, false, false, false, false}, blackPassedFiles = {false, false, false, false, false, false, false, false};
-        boolean passed;
-        for (int i = 0; i < 8; i++) {
-            passed = whitePawnFiles[i] && !blackPawnFiles[i];
-            try {passed &= !blackPawnFiles[i-1];} catch (ArrayIndexOutOfBoundsException a) {}
-            try {passed &= !blackPawnFiles[i+1];} catch (ArrayIndexOutOfBoundsException a) {}
-            whitePassedFiles[i] = passed;
-            passed = blackPawnFiles[i] && !whitePawnFiles[i];
-            try {passed &= !whitePawnFiles[i-1];} catch (ArrayIndexOutOfBoundsException a) {}
-            try {passed &= !whitePawnFiles[i+1];} catch (ArrayIndexOutOfBoundsException a) {}
-            blackPawnFiles[i] = passed;
-        }
-        int[] out = new int[16];
-        int i = 0;
-        for (int j = 0; j < 64; j++) {
-            int file = j % 8;
-            if (position[j] == 11 && whitePassedFiles[file]) out[i++] = j;
-            if (position[j] == 12 && blackPassedFiles[file]) out[i++] = j;
-        }
-        return Arrays.copyOf(out, Reference.countNonzeros(out));
+        return output;
     }
     int simpleCheckmate() {
         //0 = no, 1 = ladder - white, 2 = white with queen, 3 = white with rook, -1 = ladder - black, -2 = black with queen, -3 = black with rook
-        int whiteQueens = 0, whiteRooks = 0, whiteHeavyPieces = 0, blackQueens = 0, blackRooks = 0, blackHeavyPieces = 0;
-        for (int i = 0; i < 64; i++) {
-            switch (position[i]) {
-                case 1: case 2: break;
-                case 3:
-                    whiteQueens++;
-                    whiteHeavyPieces++;
-                    break;
-                case 4:
-                    blackQueens++;
-                    blackHeavyPieces++;
-                    break;
-                case 5:
-                    whiteRooks++;
-                    whiteHeavyPieces++;
-                    break;
-                case 6:
-                    blackRooks++;
-                    blackHeavyPieces++;
-                    break;
-                case 7: return 0;
-                case 8: return 0;
-                case 9: return 0;
-                case 10: return 0;
-                case 11: return 0;
-                case 12: return 0;
-            }
-        }
+        int whiteQueens = Long.bitCount(pieceBoard[2]), whiteRooks = Long.bitCount(pieceBoard[4]),
+        blackQueens = Long.bitCount(pieceBoard[3]), blackRooks = Long.bitCount(pieceBoard[5]);
+        int whiteHeavyPieces = whiteQueens + whiteRooks, blackHeavyPieces = blackQueens + blackRooks;
+        if ((pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9] | pieceBoard[10] | pieceBoard[11]) != 0) return 0;
         if (whiteHeavyPieces > 0 && blackHeavyPieces > 0) return 0;
         if (whiteHeavyPieces > 1) return 1;
         if (blackHeavyPieces > 1) return -1;
@@ -1398,7 +1214,7 @@ class Position {
     int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval) {
         ChessProject.nodes++;
         byte[][] moves = sortedMoves;
-        boolean maximizing = position[64] == 1;
+        boolean maximizing = position[0] == 1;
         boolean checked = inCheck();
         int best = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
         if (!checked) {
@@ -1420,8 +1236,7 @@ class Position {
         for (int i = 0; i < moves[0].length; i++) {
             if (!checked && !isTacticalMove(moves[0][i], moves[1][i])) continue;
             makeMove(moves[0][i], moves[1][i]);
-            int potential;
-            potential = evalQ(sortMoves(generateMoves()), alpha, beta, true);
+            int potential = evalQ(sortMoves(generateMoves()), alpha, beta, true);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1441,156 +1256,6 @@ class Position {
             killerMoves[1] = 0;
             killerMoves[2] = 0;
         }
-        int checkmateCase = simpleCheckmate();
-        if (checkmateCase != 0) {
-            /* Checkmate algorithm!
-
-            First: check for mate in 2
-            For ladder:
-            1. box the king
-            2. move pieces up to give checkmate
-            3. if the king reaches the pieces and the back piece isn't a queen, move to other side of the board
-            4. check for stalemate
-            For single piece checkmates:
-            1. box the king
-            2. approach with king
-            3. gradually decrease the size of the box
-
-            */
-            int possibleEval = (checkmateCase > 0) ? Integer.MAX_VALUE : Integer.MIN_VALUE;
-            if (depth >= 3) {
-                int[] checkForMate = evalDepth(3);
-                if (checkForMate[0] == possibleEval) return checkForMate;
-                if ((checkmateCase > 0) != (position[64] == 1)) /*well, this is bad...*/ return new int[]{possibleEval, checkForMate[1], checkForMate[2]};
-            }
-            //squares based in 0-63 for now
-            int targetKing = (checkmateCase > 0) ? Reference.unserialize(pieceBoard[1])[0] : Reference.unserialize(pieceBoard[0])[0];
-            int kingFile = targetKing % 8;
-            int kingRank = (targetKing - kingFile) / 8;
-            int[] pieces = (checkmateCase > 0) ? Reference.unserialize(pieceBoard[2] | pieceBoard[4]) : Reference.unserialize(pieceBoard[3] | pieceBoard[5]);
-            int closest = Reference.closestEdge(targetKing);
-            int[] seekSquares = new int[8];
-            boolean cutOff = false;
-            switch (closest) {
-                case 1:
-                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingRank * 8 + 8) + i;
-                    break;
-                case 2:
-                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingFile + 1) + (8 * i);
-                    break;
-                case 3:
-                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingRank * 8 - 8) + i;
-                    break;
-                case 4:
-                    for (int i = 0; i < 8; i++) seekSquares[i] = (kingFile - 1) + (8 * i);
-                    break;
-                default: break;
-            }
-            for (int p : pieces) {
-                for (int s : seekSquares) {
-                    if (p == s) {
-                        cutOff = true;
-                        break;
-                    }
-                    if (cutOff) break;
-                }
-            }
-            if (cutOff) {
-                /*Algorithm:
-                
-                Ladder: just move pieces up
-                if the king can take it, move the trailing piece to the far edge of the board
-                Queen: keep moving the queen a knight's distance away from the king until it's in the corner
-                -> perpetual zugzwang
-                then keep it a "camel's distance" away from the corner (g5/e7 for h8) when the king is stuck in the corner, and approach with king
-                Rook: if the king is far, move it up, otherwise:
-                if the size of the box can be decreased, do it, otherwise:
-                waste a move with the king, force the other king to move
-                */
-                switch (checkmateCase) {
-                    case 1:
-                    case -1:
-                        //ladder
-                    case 2:
-                    case -2:
-                        //king and queen
-                    case 3:
-                    case -3:
-                        //king and rook
-                    default: break;
-                }
-            } else {
-                int[] potentialMovesStart = new int[50]; //1-64
-                int[] potentialMovesEnd = new int[50]; //1-64
-                int index = 0;
-                for (int i = 0; i < pieces.length; i++) {
-                    for (byte s : legalMoves(pieces[i]+1)) { // 1-64
-                        for (int q : seekSquares) { // 0-63
-                            if (s == q+1) {
-                                potentialMovesStart[index] = pieces[i]+1;
-                                potentialMovesEnd[index] = s;
-                                index++;
-                                break;
-                            }
-                        }
-                    }
-                }
-                potentialMovesStart = Arrays.copyOf(potentialMovesStart, Reference.countNonzeros(potentialMovesStart));
-                potentialMovesEnd = Arrays.copyOf(potentialMovesEnd, Reference.countNonzeros(potentialMovesEnd));
-                //check to see if it can be taken: remove piece, see if king can go there, then put piece back
-                for (int i = 0; i < potentialMovesEnd.length; i++) {
-                    boolean squareSafe = true;
-                    int startSquare = potentialMovesStart[i];
-                    int testSquare = potentialMovesEnd[i];
-                    position[startSquare-1] = 0;
-                    for (byte b : legalMoves(targetKing+1)) {
-                        if (b == testSquare) {
-                            squareSafe = false;
-                            break;
-                        }
-                    }
-                    //test for stalemate: make move, try gameStatus(), undo move
-                    position[testSquare-1] = position[startSquare-1];
-                    position[startSquare-1] = 0;
-                    position[64] = 1 - position[64];
-                    try {gameStatus();} catch (GameEndsException g) {if (g.getMessage().equals("0")) squareSafe = false;}
-                    position[startSquare-1] = position[testSquare-1];
-                    position[testSquare-1] = 0;
-                    position[64] = 1 - position[64];
-                    if (squareSafe) return new int[]{possibleEval, startSquare, testSquare};
-                }
-                //no cutoff squares are safe! Move a piece to the far edge of the board
-                for (int pieceSquare : pieces) {
-                    // check piece move for stalemate, then move to the next piece if the candidate causes stalemate
-                    int potentialMove = 0;
-                    switch (closest) {
-                        case 1:
-                        case 3:
-                            //cutting off along a rank, so move to the furthest file from the king
-                            if (kingFile >= 4) /*move to a-file*/ potentialMove = pieceSquare - (pieceSquare % 8);
-                            else /*move to h-file*/ potentialMove = pieceSquare - (pieceSquare % 8) + 7;
-                            break;
-                        case 2:
-                        case 4:
-                            if (kingRank >= 4) /*move to 1st rank*/ potentialMove = pieceSquare % 8;
-                            else /* move to 8th rank*/ potentialMove = 56 + pieceSquare % 8;
-                            break;
-                        default: break;
-                    }
-                    //test for stalemate
-                    position[potentialMove] = position[pieceSquare];
-                    position[pieceSquare] = 0;
-                    position[64] = 1 - position[64];
-                    try {gameStatus();} catch (GameEndsException g) {if (g.getMessage().equals("0")) continue;}
-                    position[pieceSquare] = position[potentialMove];
-                    position[potentialMove] = 0;
-                    position[64] = 1 - position[64];
-                    return new int[]{possibleEval, pieceSquare+1, potentialMove+1};
-                }
-                //every single far-edge move causes stalemate! Unlucky
-                //just make a move and hope for the best
-            }
-        }
         int alphaOriginal = alpha;
         int betaOriginal = beta;
         int bound = 0;
@@ -1609,7 +1274,7 @@ class Position {
                     beta = Math.min(beta, data[0]);
                 }
                 if (alpha >= beta) {
-                    if (!isTacticalMove(data[1], data[2])) storeQuietMove(getPiece(data[1]), data[1], data[2], depth);
+                    if (!isTacticalMove(data[1], data[2])) storeQuietMove(ChessProject.getPiece(pieceBoard, data[1]), data[1], data[2], depth);
                     return new int[]{data[0], data[1], data[2]};
                 }
             }
@@ -1618,21 +1283,21 @@ class Position {
         if (depth == maxDepth) {
             start = ChessProject.getTime();
         }
-        boolean maximizing = position[64] == 1;
+        boolean maximizing = position[0] == 1;
         //null move pruning
         boolean hasNullMoveBound = maximizing ? beta < Integer.MAX_VALUE : alpha > Integer.MIN_VALUE;
         if (depth > 2 && hasNullMoveBound && !pawnEndgame() && !inCheck() && depth < maxDepth) { //don't want to do this at the root node
             int[] evalPass;
-            int enPassantSquare = position[69];
-            position[64] = 1 - position[64]; //make a null move
-            position[69] = 0;
+            int enPassantSquare = position[5];
+            position[0] = 1 - position[0]; //make a null move
+            position[5] = 0;
             currentZobrist = Reference.passMoveZobrist(position, currentZobrist);
             try {
                 int nullDepth = depth - 3;
                 evalPass = maximizing ? evalDepth(nullDepth, beta - 1, beta) : evalDepth(nullDepth, alpha, alpha + 1);
             } finally {
-                position[64] = 1 - position[64]; //restore original position
-                position[69] = enPassantSquare;
+                position[0] = 1 - position[0]; //restore original position
+                position[5] = enPassantSquare;
                 currentZobrist = Reference.restoreFromPassZobrist(currentZobrist, enPassantSquare);
             }
             if (maximizing ? evalPass[0] >= beta : evalPass[0] <= alpha) {
@@ -1694,7 +1359,7 @@ class Position {
                 beta = Math.min(beta, evaluation);
             }
             if (alpha >= beta) {
-                if (!isTacticalMove(moves[0][i], moves[1][i])) storeQuietMove(getPiece(moves[0][i]), moves[0][i], moves[1][i], depth);
+                if (!isTacticalMove(moves[0][i], moves[1][i])) storeQuietMove(ChessProject.getPiece(pieceBoard, moves[0][i]), moves[0][i], moves[1][i], depth);
                 break;
             }
         }
@@ -1706,7 +1371,7 @@ class Position {
             }
         }
         bound = evaluation <= alphaOriginal ? 1 : evaluation >= betaOriginal ? -1 : 0;
-        store(position, evaluation, bestStart, bestEnd, depth, bound);
+        store(evaluation, bestStart, bestEnd, depth, bound);
         return new int[]{evaluation, bestStart, bestEnd};
     }
 }
@@ -1715,6 +1380,13 @@ class Reference {
     static int countNonzeros(int[] inputArray) {
         int count = 0;
         for (int element : inputArray) {
+            if (element != 0) count++;
+        }
+        return count;
+    }
+    static int countNonzeros(byte[] inputArray) {
+        int count = 0;
+        for (byte element : inputArray) {
             if (element != 0) count++;
         }
         return count;
@@ -1728,25 +1400,23 @@ class Reference {
     private static final long zobristWCL = generator.nextLong(); //white castle long
     private static final long zobristBCS = generator.nextLong(); //black castle short
     private static final long zobristBCL = generator.nextLong(); //black castle long
-    static long getZobrist(int[] position) {
+    static long getZobrist(long[] boards, int[] extraData) {
         long out = empty;
-        for (int i = 0; i < 64; i++) {
-            if (position[i] != 0) {
-                out ^= zobrist[i][position[i]-1];
-            }
+        for (int i = 0; i < 12; i++) {
+            for (int s : unserialize(boards[i])) out ^= zobrist[s][i];
         }
-        out ^= ((position[64] == 1) ? whiteToMove : blackToMove);
-        if (position[65] == 1) out ^= zobristWCS;
-        if (position[66] == 1) out ^= zobristWCL;
-        if (position[67] == 1) out ^= zobristBCS;
-        if (position[68] == 1) out ^= zobristBCL;
-        if (position[69] != 0) out ^= zobrist[position[69]-1][12];
+        out ^= ((extraData[0] == 1) ? whiteToMove : blackToMove);
+        if (extraData[1] == 1) out ^= zobristWCS;
+        if (extraData[2] == 1) out ^= zobristWCL;
+        if (extraData[3] == 1) out ^= zobristBCS;
+        if (extraData[4] == 1) out ^= zobristBCL;
+        if (extraData[5] != 0) out ^= zobrist[extraData[5]-1][12];
         return out;
     }
-    static long passMoveZobrist(int[] posBefore, long zobristBefore) {
+    static long passMoveZobrist(int[] dataBefore, long zobristBefore) {
         zobristBefore ^= whiteToMove;
         zobristBefore ^= blackToMove;
-        if (posBefore[69] != 0) zobristBefore ^= zobrist[posBefore[69]-1][12];
+        if (dataBefore[5] != 0) zobristBefore ^= zobrist[dataBefore[5]-1][12];
         return zobristBefore;
     }
     static long restoreFromPassZobrist(long zobristModified, int originalEP) {
@@ -1755,13 +1425,13 @@ class Reference {
         if (originalEP != 0) zobristModified ^= zobrist[originalEP-1][12];
         return zobristModified;
     }
-    static long updateZobrist(int[] posBefore, long zobristBefore, int start, int end) {
-        int piece = posBefore[start-1];
-        int captured = posBefore[end-1];
+    static long updateZobrist(long[] boardsBefore, int[] dataBefore, long zobristBefore, int start, int end) {
+        int piece = ChessProject.getPiece(boardsBefore, start);
+        int captured = ChessProject.getPiece(boardsBefore, end);
         zobristBefore ^= zobrist[start-1][piece-1];
         zobristBefore ^= zobrist[end-1][piece-1];
-        if (posBefore[69] != 0) zobristBefore ^= zobrist[posBefore[69]-1][12];
-        if (end == posBefore[69]) {
+        if (dataBefore[5] != 0) zobristBefore ^= zobrist[dataBefore[5]-1][12];
+        if (end == dataBefore[5]) {
             if (piece == 11) {
                 zobristBefore ^= zobrist[(end - 8) - 1][11];
             } else if (piece == 12) {
@@ -1771,18 +1441,18 @@ class Reference {
             }
         } else if (captured != 0) zobristBefore ^= zobrist[end-1][captured-1];
         if (captured == 5) {
-            if (end == 8 && posBefore[65] != 0) zobristBefore ^= zobristWCS;
-            if (end == 1 && posBefore[66] != 0) zobristBefore ^= zobristWCL;
+            if (end == 8 && dataBefore[1] != 0) zobristBefore ^= zobristWCS;
+            if (end == 1 && dataBefore[2] != 0) zobristBefore ^= zobristWCL;
         }
         if (captured == 6) {
-            if (end == 64 && posBefore[67] != 0) zobristBefore ^= zobristBCS;
-            if (end == 57 && posBefore[68] != 0) zobristBefore ^= zobristBCL;
+            if (end == 64 && dataBefore[3] != 0) zobristBefore ^= zobristBCS;
+            if (end == 57 && dataBefore[4] != 0) zobristBefore ^= zobristBCL;
         }
         switch (piece) {
             case 1:
                 if (start == 5) {
-                    if (posBefore[65] != 0) zobristBefore ^= zobristWCS;
-                    if (posBefore[66] != 0) zobristBefore ^= zobristWCL;
+                    if (dataBefore[1] != 0) zobristBefore ^= zobristWCS;
+                    if (dataBefore[2] != 0) zobristBefore ^= zobristWCL;
                     if (end == 7) {
                         //move rook
                         zobristBefore ^= zobrist[7][4];
@@ -1797,8 +1467,8 @@ class Reference {
                 break;
             case 2:
                 if (start == 61) {
-                    if (posBefore[67] != 0) zobristBefore ^= zobristBCS;
-                    if (posBefore[68] != 0) zobristBefore ^= zobristBCL;
+                    if (dataBefore[3] != 0) zobristBefore ^= zobristBCS;
+                    if (dataBefore[4] != 0) zobristBefore ^= zobristBCL;
                     if (end == 63) {
                         //move rook
                         zobristBefore ^= zobrist[63][5];
@@ -1812,17 +1482,17 @@ class Reference {
                 }
                 break;
             case 5:
-                if (start == 8 && posBefore[65] != 0) zobristBefore ^= zobristWCS;
-                if (start == 1 && posBefore[66] != 0) zobristBefore ^= zobristWCL;
+                if (start == 8 && dataBefore[1] != 0) zobristBefore ^= zobristWCS;
+                if (start == 1 && dataBefore[2] != 0) zobristBefore ^= zobristWCL;
                 break;
             case 6:
-                if (start == 64 && posBefore[67] != 0) zobristBefore ^= zobristBCS;
-                if (start == 57 && posBefore[68] != 0) zobristBefore ^= zobristBCL;
+                if (start == 64 && dataBefore[3] != 0) zobristBefore ^= zobristBCS;
+                if (start == 57 && dataBefore[4] != 0) zobristBefore ^= zobristBCL;
                 break;
             case 11:
                 if (end - start == 16) {
-                    boolean pawnToLeft = end % 8 != 1 /*not on the a-file*/ && posBefore[(end - 1) - 1] == 12;
-                    boolean pawnToRight = end % 8 != 0 /*not on the h-file*/ && posBefore[(end + 1) - 1] == 12;
+                    boolean pawnToLeft = end % 8 != 1 /*not on the a-file*/ && ChessProject.getPiece(boardsBefore, end - 1) == 12;
+                    boolean pawnToRight = end % 8 != 0 /*not on the h-file*/ && ChessProject.getPiece(boardsBefore, end + 1) == 12;
                     if (pawnToLeft || pawnToRight) zobristBefore ^= zobrist[(end - 8) - 1][12];
                 }
                 if (end > 56) {
@@ -1833,8 +1503,8 @@ class Reference {
                 break;
             case 12:
                 if (end - start == -16) {
-                    boolean pawnToLeft = end % 8 != 1 /*not on the a-file*/ && posBefore[(end - 1) - 1] == 11;
-                    boolean pawnToRight = end % 8 != 0 /*not on the h-file*/ && posBefore[(end + 1) - 1] == 11;
+                    boolean pawnToLeft = end % 8 != 1 /*not on the a-file*/ && ChessProject.getPiece(boardsBefore, end - 1) == 11;
+                    boolean pawnToRight = end % 8 != 0 /*not on the h-file*/ && ChessProject.getPiece(boardsBefore, end + 1) == 11;
                     if (pawnToLeft || pawnToRight) zobristBefore ^= zobrist[(end + 8) - 1][12];
                 }
                 if (end <= 8) {
@@ -1960,46 +1630,6 @@ class Reference {
         if (minimum == distances2) return 2;
         if (minimum == distances3) return 3;
         return 4;
-    }
-    private static long[] bitSplit(long bits) {
-        long[] output = new long[Long.bitCount(bits)];
-        int i = 0;
-        while (bits != 0) {
-            output[i] = Long.lowestOneBit(bits);
-            bits ^= output[i];
-            i++;
-        }
-        return output;
-    }
-    private static Set<Long> combineAll(long bits1, long bits2, long bits3, long bits4) {
-        Set<Long> output = new HashSet<>();
-        Set<Long> one = pickAll(bits1);
-        Set<Long> two = pickAll(bits2);
-        Set<Long> three = pickAll(bits3);
-        Set<Long> four = pickAll(bits4);
-        for (Long item1 : one) {
-            for (Long item2 : two) {
-                for (Long item3 : three) {
-                    for (Long item4 : four) {
-                        output.add(item1.longValue() | item2.longValue() | item3.longValue() | item4.longValue());
-                    }
-                }
-            }
-        }
-        output.remove(0L);
-        return output;
-    }
-    private static Set<Long> pickAll(long allBits) {
-        long[] bits = bitSplit(allBits);
-        Set<Long> everything = new HashSet<>();
-        Set<Long> additions = new HashSet<>();
-        everything.add(0L);
-        for (long bit : bits) {
-            for (Long item : everything) additions.add(item | bit);
-            everything.addAll(additions);
-            additions.clear();
-        }
-        return everything;
     }
     //bitboards
     private static final int[] bishopDx = {1, 1, -1, -1};
@@ -2139,20 +1769,23 @@ class Reference {
         0b1011111101000000010000000100000001000000010000000100000001000000L,
         0b0111111110000000100000001000000010000000100000001000000010000000L
     };
-    private static Map<Long, Long>[] bishopBitboards = new Map[64];
-    private static Map<Long, Long>[] rookBitboards = new Map[64];
-    static long serialize(int[] board) {
-        long output = 0L;
-        for (int square = 0; square < 64; square++) {
-            if (board[square] != 0) output |= (1L << square);
-        }
-        return output;
-    }
+    private static long[][] bishopAttacks = new long[64][];
+    private static long[][] rookAttacks = new long[64][];
     static int[] unserialize(long bitboard) {
         int[] output = new int[Long.bitCount(bitboard)];
         int i = 0;
         while (bitboard != 0) {
             output[i] = Long.numberOfTrailingZeros(bitboard);
+            i++;
+            bitboard &= (bitboard-1);
+        }
+        return output;
+    }
+    static byte[] unserializeToBytes(long bitboard) {
+        byte[] output = new byte[Long.bitCount(bitboard)];
+        int i = 0;
+        while (bitboard != 0) {
+            output[i] = (byte) Long.numberOfTrailingZeros(bitboard);
             i++;
             bitboard &= (bitboard-1);
         }
@@ -2183,15 +1816,32 @@ class Reference {
         }
         return output;
     }
-    private static long[] allPossible(int square, int[] dx, int[] dy) {
-        Set<Long> everything = combineAll(
-            fill(square, 0L, new int[]{dx[0]}, new int[]{dy[0]}),
-            fill(square, 0L, new int[]{dx[1]}, new int[]{dy[1]}),
-            fill(square, 0L, new int[]{dx[2]}, new int[]{dy[2]}),
-            fill(square, 0L, new int[]{dx[3]}, new int[]{dy[3]})
-        );
-        long[] out = everything.stream().mapToLong(Long::longValue).toArray();
-        return out;
+    private static int occupancyIndex(long occupancy, long mask) {
+        int index = 0;
+        int bitIndex = 0;
+        while (mask != 0) {
+            long bit = Long.lowestOneBit(mask);
+            if ((occupancy & bit) != 0) index |= 1 << bitIndex;
+            mask ^= bit;
+            bitIndex++;
+        }
+        return index;
+    }
+    private static long[] createSlidingAttackTable(int square, long mask, int[] dx, int[] dy) {
+        long[] attacks = new long[1 << Long.bitCount(mask)];
+        for (int index = 0; index < attacks.length; index++) {
+            long occupancy = 0L;
+            long remainingMask = mask;
+            int bitIndex = 0;
+            while (remainingMask != 0) {
+                long bit = Long.lowestOneBit(remainingMask);
+                if ((index & (1 << bitIndex)) != 0) occupancy |= bit;
+                remainingMask ^= bit;
+                bitIndex++;
+            }
+            attacks[index] = fill(square, occupancy, dx, dy);
+        }
+        return attacks;
     }
     static void initialize() {
         for (int i = 0; i < 64; i++) {
@@ -2219,29 +1869,23 @@ class Reference {
             addConditional(kingVision, i, -1, 1);
             addConditional(kingVision, i, -1, -1);
             //rooks
-            Map<Long, Long> rookMoves = new HashMap<>();
-            for (long p : allPossible(i, rookDx, rookDy)) rookMoves.put(p, fill(i, p, rookDx, rookDy));
-            rookBitboards[i] = rookMoves; //rookBitboards.put(i, rookMoves);
+            rookAttacks[i] = createSlidingAttackTable(i, rookVision[i], rookDx, rookDy);
             //bishops
-            Map<Long, Long> bishopMoves = new HashMap<>();
-            for (long p : allPossible(i, bishopDx, bishopDy)) bishopMoves.put(p, fill(i, p, bishopDx, bishopDy));
-            bishopBitboards[i] = bishopMoves; //bishopBitboards.put(i, bishopMoves);
+            bishopAttacks[i] = createSlidingAttackTable(i, bishopVision[i], bishopDx, bishopDy);
             //zobrist
             for (int j = 0; j < 13; j++) {
                 zobrist[i][j] = generator.nextLong();
             }
         }
     }
-    //attack map magic bitboards
-    static long getBitboard(int square, int[] board, int piece) {
+    //attack maps
+    static long getBitboard(int square, long allPieces, int piece) {
         switch (piece) {
             case 1: case 2: return kingVision[square];
-            case 3: return getBitboard(square, board, 5) | getBitboard(square, board, 7);
-            case 4: return getBitboard(square, board, 6) | getBitboard(square, board, 8);
-            case 5: case 6: return rookBitboards[square].get((serialize(board) & rookVision[square]) | (1L << square));
-            //return rookBitboards.get(square).get((serialize(board) & rookVision[square]) | (1L << square));
-            case 7: case 8: return bishopBitboards[square].get((serialize(board) & bishopVision[square]) | (1L << square));
-            //return bishopBitboards.get(square).get((serialize(board) & bishopVision[square]) | (1L << square));
+            case 3: return getBitboard(square, allPieces, 5) | getBitboard(square, allPieces, 7);
+            case 4: return getBitboard(square, allPieces, 6) | getBitboard(square, allPieces, 8);
+            case 5: case 6: return rookAttacks[square][occupancyIndex(allPieces, rookVision[square])];
+            case 7: case 8: return bishopAttacks[square][occupancyIndex(allPieces, bishopVision[square])];
             case 9: case 10: return knightVision[square];
             case 11: return whitePawnVision[square];
             case 12: return blackPawnVision[square];
