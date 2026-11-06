@@ -1473,8 +1473,8 @@ class Reference {
     static double distance(int square1, int square2) {
         int x1 = square1 % 8;
         int y1 = square1 / 8;
-        int x2 = square % 8;
-        int y2 = square / 8;
+        int x2 = square2 % 8;
+        int y2 = square2 / 8;
         return Math.hypot(x2-x1, y2-y1);
     }
     private static Random generator = new Random(-0x382E4DFBA50BC32FL);
