@@ -13,13 +13,6 @@ public class ChessProject {
         /*
         PASTE INTO TERMINAL:
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\ChessProject.java"
-
-        TO DO:
-        update
-        legalMovesBasic
-        makeMove
-        restore
-
         */
         try {
             run();
@@ -169,10 +162,15 @@ public class ChessProject {
         Position pos = new Position(setup, timeLimit * 1000, depth);
         pos.display();
         pos.displayStats();
-        try {
-            pos.gameStatus();
-        } catch (GameEndsException status) {
-            throw new GameAlreadyOverException(status.getMessage());
+        switch (pos.gameStatus()) {
+            case 1:
+                throw new GameAlreadyOverException("Checkmate white wins");
+            case 2:
+                throw new GameAlreadyOverException("Checkmate black wins");
+            case 3:
+                throw new GameAlreadyOverException("Draw");
+            default:
+                break;
         }
         int[] lastCompleted = null;
         if (depth > 0) {
@@ -440,12 +438,10 @@ class Position {
     }
     int currentCount(boolean checkStatus) {
         if (checkStatus) {
-            try {gameStatus();} catch (GameEndsException g) {
-                switch (g.getMessage()) {
-                    case "1": return Integer.MAX_VALUE;
-                    case "2": return Integer.MIN_VALUE;
-                    default: return 0;
-                }
+            switch (gameStatus()) {
+                case 1: return Integer.MAX_VALUE;
+                case 2: return Integer.MIN_VALUE;
+                case 3: return 0;
             }
         }
         int outputTactical = 0;
@@ -1092,20 +1088,20 @@ class Position {
         int piece = ChessProject.getPiece(pieceBoard, start);
         return !isEmpty(end) || ((piece == 11 || piece == 12) && end == position[5]) || (piece == 11 && end >= 57) || (piece == 12 && end <= 8);
     }
-    void gameStatus() throws GameEndsException {
-        gameStatus(generateMoves());
+    int gameStatus() {
+        return gameStatus(generateMoves());
     }
-    void gameStatus(byte[][] moves) throws GameEndsException {
+    int gameStatus(byte[][] moves) {
         if (moves[0].length == 0) {
             if (inCheck()) {
-                int out = (position[0] == 1) ? 2 : 1; //checkmate
-                throw new GameEndsException(out);
+                return (position[0] == 1) ? 2 : 1; //checkmate
             }
-            throw new GameEndsException(0); //stalemate
+            return 3; //stalemate
         }
         if (!sufficientMaterial() || position[6] >= 100) {
-            throw new GameEndsException(0);
+            return 3; //draw
         }
+        return 0;
     }
     boolean sufficientMaterial() {
         int whiteKnights = Long.bitCount(pieceBoard[8]), blackKnights = Long.bitCount(pieceBoard[9]),
@@ -1250,6 +1246,97 @@ class Position {
         return best;
     }
     int[] evalDepth(int depth, int alpha, int beta) throws TimeExceededException {
+        byte[][] unorderedMoves = generateMoves();
+        switch (gameStatus(unorderedMoves)) {
+            case 1: return new int[]{Integer.MIN_VALUE, 0, 0};
+            case 2: return new int[]{Integer.MAX_VALUE, 0, 0};
+            case 3: return new int[]{0, 0, 0};
+        }
+        /*int simpleCheckmateCheck = simpleCheckmate();
+        if (simpleCheckmateCheck != 0) {
+            int basicEval = (simpleCheckmateCheck > 0) ? Integer.MAX_VALUE : Integer.MIN_VALUE;
+            if ((simpleCheckmateCheck < 0 && position[0] == 1) || (simpleCheckmateCheck > 0 && position[0] == 0)) {
+                ChessProject.nodes = Integer.MAX_VALUE;
+                return new int[]{basicEval, unorderedMoves[0][0], unorderedMoves[1][0]};
+            }
+            int enemyKing = kingSquare();
+            long[] rowref = {
+                    0xFFL,
+                    0xFF00L,
+                    0xFF0000L,
+                    0xFF000000L,
+                    0xFF00000000L,
+                    0xFF0000000000L,
+                    0xFF000000000000L,
+                    0xFF00000000000000L
+            };
+            long[] colref = {
+                    0x0101010101010101L,
+                    0x0202020202020202L,
+                    0x0404040404040404L,
+                    0x0808080808080808L,
+                    0x1010101010101010L,
+                    0x2020202020202020L,
+                    0x4040404040404040L,
+                    0x8080808080808080L
+            };
+            int closestEdge = Reference.closestEdge(enemyKing);
+            long heavyPieces = (simpleCheckmateCheck > 0) ? (pieceBoard[2] | pieceBoard[4]) : (pieceBoard[3] | pieceBoard[5]);
+            //check if anything is hanging
+            position[0] = 1 - position[0];
+            long kingMoves = legalMoves(enemyKing+1);
+            position[0] = 1 - position[0];
+            long hangingPieces = kingMoves & heavyPieces;
+            if (hangingPieces != 0) {
+                int problem = Long.numberOfTrailingZeros(hangingPieces);
+                //move as far away as possible
+                long movesToConsider = legalMovesBasic(problem+1);
+                int furthestSquare = problem;
+                double largestDistance = 0.0d;
+                for (int s : Reference.unserialize(movesToConsider)) {
+                    double candidateDistance = Reference.distance(problem, s);
+                    if (candidateDistance > largestDistance) {
+                        furthestSquare = s;
+                        largestDistance = largestDistance;
+                    }
+                }
+                ChessProject.nodes = Integer.MAX_VALUE;
+                return new int[]{basicEval, problem+1, furthestSquare+1};
+            }
+            long seek = -1, ladderSeek = -1; //best place for the heavy piece to be to cut off the king
+            switch (closestEdge) {
+                case 1:
+                    ladderSeek = rowref[enemyKing / 8];
+                    seek = rowref[enemyKing / 8 + 1];
+                    break;
+                case 2:
+                    ladderSeek = rowref[enemyKing % 8];
+                    seek = colref[enemyKing % 8 - 1];
+                    break;
+                case 3:
+                    ladderSeek = rowref[enemyKing / 8];
+                    seek = rowref[enemyKing / 8 - 1];
+                    break;
+                case 4:
+                    ladderSeek = colref[enemyKing % 8];
+                    seek = colref[enemyKing % 8 + 1];
+                    break;
+            }
+            long controllingPieces = heavyPieces & seek;
+            if (controllingPieces == 0) {
+            } else {
+                if (simpleCheckmateCheck == 1 || simpleCheckmateCheck == -1) {
+                    //ladder mate, no need to bring king
+                    long piecesToConsider = (Long.bitCount(controllingPieces) > 1) ? heavyPieces : (heavyPieces ^ controllingPieces);
+                    for (int s : Reference.unserialize(piecesToConsider)) {
+                        long movesToConsider = legalMovesBasic(s+1) & ladderSeek;
+
+                    }
+                } else {
+                    //check first if the king is close or far
+                }
+            }
+        }*/
         ChessProject.nodes++;
         if (depth == maxDepth) {
             killerMoves[0] = 0;
@@ -1302,14 +1389,6 @@ class Position {
             }
             if (maximizing ? evalPass[0] >= beta : evalPass[0] <= alpha) {
                 return new int[]{maximizing ? beta : alpha, 0, 0};
-            }
-        }
-        byte[][] unorderedMoves = generateMoves();
-        try {gameStatus(unorderedMoves);} catch (GameEndsException g) {
-            switch (g.getMessage()) {
-                case "1": return new int[]{Integer.MAX_VALUE, 0, 0};
-                case "2": return new int[]{Integer.MIN_VALUE, 0, 0};
-                default: return new int[3];
             }
         }
         byte[][] moves = sortMoves(unorderedMoves);
@@ -1390,6 +1469,13 @@ class Reference {
             if (element != 0) count++;
         }
         return count;
+    }
+    static double distance(int square1, int square2) {
+        int x1 = square1 % 8;
+        int y1 = square1 / 8;
+        int x2 = square % 8;
+        int y2 = square / 8;
+        return Math.hypot(x2-x1, y2-y1);
     }
     private static Random generator = new Random(-0x382E4DFBA50BC32FL);
     private static final long empty = generator.nextLong();
@@ -1610,16 +1696,6 @@ class Reference {
         //5ply, d4 d5 c4 e6 
         Map.entry("rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 1 3", "Depth 2147483647\nEvaluation: 0.2\nBest move: g8f6") // d4 d5 c4 e6 Nc3
     );
-    static int closestEdgeRank(int square) {
-        int rank = square / 8;
-        if (rank >= 4) return 7;
-        return 0;
-    }
-    static int closestEdgeFile(int square) {
-        int file = square % 8;
-        if (file >= 4) return 7;
-        return 0;
-    }
     static int closestEdge(int square) {
         //1 = 1st rank, 2 = h-file, 3 = 9th rank, 4 = a-file
         int rank = square / 8;
@@ -1906,11 +1982,6 @@ class GameAlreadyOverException extends Exception {
 class InvalidFENException extends Exception {
     InvalidFENException(String message) {
         super(message);
-    }
-}
-class GameEndsException extends Exception {
-    GameEndsException(int status) {
-        super(Integer.toString(status));
     }
 }
 class OutOfSpaceException extends RuntimeException {
