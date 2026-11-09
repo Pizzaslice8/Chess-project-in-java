@@ -1,10 +1,6 @@
 import java.util.Scanner;
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.NoSuchElementException;
 import java.util.Arrays;
-import java.util.List;
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.Random;
 import java.util.Comparator;
@@ -15,6 +11,8 @@ public class ChessProject {
         /*
         PASTE INTO TERMINAL:
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\ChessProject.java"
+        TEST POSITION:
+        r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 w - - 0 9
         */
         try {
             run();
@@ -40,16 +38,7 @@ public class ChessProject {
     }
     static long nodes = 0L;
     static int getTime() {
-        LocalTime localTime = LocalTime.now();
-        DateTimeFormatter hour = DateTimeFormatter.ofPattern("HH");
-        DateTimeFormatter minute = DateTimeFormatter.ofPattern("mm");
-        DateTimeFormatter second = DateTimeFormatter.ofPattern("ss");
-        DateTimeFormatter millisecond = DateTimeFormatter.ofPattern("SSS");
-        String hours = localTime.format(hour);
-        String minutes = localTime.format(minute);
-        String seconds = localTime.format(second);
-        String milliseconds = localTime.format(millisecond);
-        return Integer.parseInt(milliseconds) + 1000 * Integer.parseInt(seconds) + 60000 * Integer.parseInt(minutes) + 3600000 * Integer.parseInt(hours);
+        return (int) (System.nanoTime() / 1000000.0);
     }
     static void printRed(String stuff) {
         System.out.print("\u001B[31m");
@@ -66,18 +55,9 @@ public class ChessProject {
         try {Thread.sleep(500);} catch (InterruptedException ie) {}
         System.out.print("FEN: ");
         String fen = scanner.nextLine();
-        String pgn = "";
-        ArrayList<String> pgnMoves = new ArrayList<>();
-        if (fen.equals("PGN")) {
-            fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-            System.out.println("PGN square-to-square: ");
-            pgn = scanner.nextLine();
-            String[] pgnElements = pgn.trim().split("\\s+");
-            for (String element : pgnElements) {
-                if (!element.matches("^[0-9]+\\.$")) pgnMoves.add(element);
-            }
-        }
-        if (Reference.openings.containsKey(fen)) {
+        if (fen.equals("TEST POSITION")) {
+            fen = "r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 w - - 0 9";
+        } else if (Reference.openings.containsKey(fen)) {
             System.out.println(Reference.openings.get(fen));
             return;
         }
@@ -173,13 +153,6 @@ public class ChessProject {
         System.out.print("Time limit: ");
         int timeLimit = scanner.nextInt();
         Position pos = new Position(setup, timeLimit * 1000, depth);
-        if (!pgnMoves.isEmpty()) {
-            pgnMoves.forEach(move -> {
-                int start = parseSquare(move.substring(0, 2));
-                int end = parseSquare(move.substring(2, 4));
-                pos.makeMove(start, end);
-            });
-        }
         pos.display();
         pos.displayStats();
         switch (pos.gameStatus()) {
@@ -481,12 +454,14 @@ class Position {
         }
         int outputTactical = 0;
         int outputNontactical = 0;
-        boolean tactical = activePieces() > 4;
+        double activePiecesModifier = Math.min(activePieces(), 4) / 4.0;
         for (int i = 0; i < 64; i++) {
             outputTactical += pieceActivity[i] + material[i] + centralControl[i]  + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
             outputNontactical += material[i] + centralControl[i] + space[i] + outposts[i] + (pieceActivity[i] + kingSafety[i] + rooksSeventh[i]) / 3;
         }
-        return (tactical ? outputTactical : outputNontactical) + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(tactical);
+        int tacticalOutput = outputTactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(true);
+        int nontacticalOutput = outputNontactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(false);
+        return (int) Math.round(activePiecesModifier * tacticalOutput + (1 - activePiecesModifier) * nontacticalOutput);
     }
     int activePieces() {
         //test if both sides have a lot of really active pieces
@@ -549,19 +524,16 @@ class Position {
         }
         if (piece == 1 || piece == 2) {
             double proximityToCenter = Math.hypot(ChessProject.getX(square) - 4.5, ChessProject.getY(square) - 4.5);
-            if (endgame()) {
-                pieceActivity[square-1] = (byte) (modifier * 2 * (10 - Math.round(proximityToCenter * 1.7)));
-            } else {
-                kingSafety[square-1] = (byte) (modifier * 2 * (Math.round(proximityToCenter * 1.7) - 10));
-                if (piecePresent(sameColorPawn, ChessProject.translate(square, 0, modifier))) {
-                    kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 10); //pawn in front of king
-                }
-                if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, modifier))) {
-                    kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5);
-                }
-                if (piecePresent(sameColorPawn, ChessProject.translate(square, -1, modifier))) {
-                    kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5);
-                }
+            pieceActivity[square-1] = (byte) (modifier * 2 * (10 - Math.round(proximityToCenter * 1.7)) * percentEndgame());
+            kingSafety[square-1] = (byte) (modifier * 2 * (10 - Math.round(proximityToCenter * 1.7)) * (1 - percentEndgame()));
+            if (piecePresent(sameColorPawn, ChessProject.translate(square, 0, modifier))) {
+                kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 10 * (1 - percentEndgame())); //pawn in front of king
+            }
+            if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, modifier))) {
+                kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5 * (1 - percentEndgame()));
+            }
+            if (piecePresent(sameColorPawn, ChessProject.translate(square, -1, modifier))) {
+                kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5 * (1 - percentEndgame()));
             }
         }
         if (piece == 5) {
@@ -597,20 +569,19 @@ class Position {
                 default:
                     break;
             }
-            if (endgame()) {
-                long[] data = passedPawns();
-                if (piece == 11) {
-                    if ((data[0] & (1L << (square - 1))) != 0) modifier *= 5; //passer
-                    if ((data[2] & (1L << (square - 1))) != 0) modifier *= 3; //potential passer
-                    if ((data[4] & (1L << (square - 1))) != 0) modifier *= 2; //neighbors a potential passer
-                }
-                if (piece == 12) {
-                    if ((data[1] & (1L << (square - 1))) != 0) modifier *= 5;
-                    if ((data[3] & (1L << (square - 1))) != 0) modifier *= 3;
-                    if ((data[5] & (1L << (square - 1))) != 0) modifier *= 2;
-                }
+            long[] data = passedPawns();
+            double specialModifier = modifier;
+            if (piece == 11) {
+                if ((data[0] & (1L << (square - 1))) != 0) specialModifier += 4 * percentEndgame(); //passer
+                if ((data[2] & (1L << (square - 1))) != 0) specialModifier += 2 * percentEndgame(); //potential passer
+                if ((data[4] & (1L << (square - 1))) != 0) specialModifier += percentEndgame(); //neighbors a potential passer
             }
-            space[square-1] = (byte) Math.round(modifier * addition);
+            if (piece == 12) {
+                if ((data[1] & (1L << (square - 1))) != 0) specialModifier += 4 * percentEndgame();
+                if ((data[3] & (1L << (square - 1))) != 0) specialModifier += 2 * percentEndgame();
+                if ((data[5] & (1L << (square - 1))) != 0) specialModifier += percentEndgame();
+            }
+            space[square-1] = (byte) Math.round(specialModifier * addition);
         }
     }
     long occupiedSquares() {
@@ -718,6 +689,8 @@ class Position {
         System.out.println(centralControlCount);
         System.out.print("King safety differential: ");
         System.out.println(kingSafetyCount);
+        System.out.print("Space differential: ");
+        System.out.println(spaceCount);
         System.out.print("Advanced rook differential: ");
         System.out.println(rookCount);
         System.out.print("Outposts: ");
@@ -1247,6 +1220,14 @@ class Position {
         //if true, zugzwang may happen at some point -> cancel the null move prune
         return (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0;
     }
+    double percentEndgame() {
+        if (endgame()) return 1.0;
+        int endgameScore = 0; //the higher, the less of an endgame it is, above 1000 it's a middlegame
+        endgameScore += Long.bitCount(pieceBoard[2] | pieceBoard[3]) * 400; //queens
+        endgameScore += Long.bitCount(pieceBoard[4] | pieceBoard[5]) * 200; //rooks
+        endgameScore += Long.bitCount(pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) * 50; //bishops and knights
+        return 1.0 - Math.min(1000.0, endgameScore) / 1000.0;
+    }
     long[] passedPawns() {
         //passed pawns white + black, passed pawn candidates white + black, passed pawn candidate helpers white + black
         boolean[] whitePawnFiles = new boolean[8],
@@ -1443,7 +1424,6 @@ class Position {
         int evaluation = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
         int bestStart = 0;
         int bestEnd = 0;
-        //int evalStatic = currentCount(false);
         for (int i = 0; i < moves[0].length; i++) {
             boolean nodeInCheck = inCheck();
             boolean reduce = depth > 2 && i >= 3 && !isTacticalMove(moves[0][i], moves[1][i]) && !inCheck(); 
