@@ -404,7 +404,7 @@ class Position {
         }
     }
     int[] getInfo() {
-        for (int i = 0; i < slot; i++) {
+        for (int i = slot - 1; i >= 0; i--) {
             if (currentZobrist == zobristStorage[i]) {
                 //found a match!
                 return new int[]{evals[i], otherInfo[i][0], otherInfo[i][1], otherInfo[i][2], otherInfo[i][3]};
