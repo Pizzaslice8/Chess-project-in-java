@@ -57,6 +57,8 @@ public class ChessProject {
         String fen = scanner.nextLine();
         if (fen.equals("TEST POSITION")) {
             fen = "r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 w - - 0 9";
+        } else if (fen.equals("TEST POSITION REVERSED")) {
+            fen = "r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 b - - 0 9";
         } else if (Reference.openings.containsKey(fen)) {
             System.out.println(Reference.openings.get(fen));
             return;
@@ -185,7 +187,7 @@ public class ChessProject {
                         System.out.println("Evaluation: " + Double.toString(evaluation));
                         System.out.println("Best move: " + parseNumbers(lastCompleted[1], lastCompleted[2]));
                     } else {
-                        byte[][] legalMoves = pos.sortMoves(pos.generateMoves());
+                        byte[][] legalMoves = pos.sortMoves(pos.generateMoves(true));
                         raw = pos.currentCount(false);
                         rawEval = raw;
                         evaluation = rawEval / 10.0;
@@ -454,14 +456,26 @@ class Position {
         }
         int outputTactical = 0;
         int outputNontactical = 0;
+        int materialDifferential = 0;
         double activePiecesModifier = Math.min(activePieces(), 4) / 4.0;
         for (int i = 0; i < 64; i++) {
-            outputTactical += pieceActivity[i] + material[i] + centralControl[i]  + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
-            outputNontactical += material[i] + centralControl[i] + space[i] + outposts[i] + (pieceActivity[i] + kingSafety[i] + rooksSeventh[i]) / 3;
+            outputTactical += pieceActivity[i] + centralControl[i]  + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
+            outputNontactical += centralControl[i] + space[i] + outposts[i] + (pieceActivity[i] + kingSafety[i] + rooksSeventh[i]) / 3;
+            materialDifferential += material[i];
         }
         int tacticalOutput = outputTactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(true);
         int nontacticalOutput = outputNontactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(false);
-        return (int) Math.round(activePiecesModifier * tacticalOutput + (1 - activePiecesModifier) * nontacticalOutput);
+        //material matters more in the endgame
+        double materialModifier = 1 + percentEndgame();
+        if ((pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]) == 0) {
+            if ((pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0) {
+                //pawn endgame, any material advantage is practically decisive
+                materialModifier = 5;
+            }
+            //minor piece endgame, any material advantage is very important
+            materialModifier = 3;
+        }
+        return (int) Math.round(activePiecesModifier * tacticalOutput + (1 - activePiecesModifier) * nontacticalOutput + materialDifferential * materialModifier);
     }
     int activePieces() {
         //test if both sides have a lot of really active pieces
@@ -525,15 +539,14 @@ class Position {
         if (piece == 1 || piece == 2) {
             double proximityToCenter = Math.hypot(ChessProject.getX(square) - 4.5, ChessProject.getY(square) - 4.5);
             pieceActivity[square-1] = (byte) (modifier * 2 * (10 - Math.round(proximityToCenter * 1.7)) * percentEndgame());
-            kingSafety[square-1] = (byte) (modifier * 2 * (10 - Math.round(proximityToCenter * 1.7)) * (1 - percentEndgame()));
             if (piecePresent(sameColorPawn, ChessProject.translate(square, 0, modifier))) {
-                kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 10 * (1 - percentEndgame())); //pawn in front of king
+                kingSafety[square-1] = (byte) (modifier * 10 * (1 - percentEndgame())); //pawn in front of king
             }
             if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, modifier))) {
-                kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5 * (1 - percentEndgame()));
+                kingSafety[square-1] = (byte) (modifier * 5 * (1 - percentEndgame()));
             }
             if (piecePresent(sameColorPawn, ChessProject.translate(square, -1, modifier))) {
-                kingSafety[square-1] = (byte) (kingSafety[square-1] + modifier * 5 * (1 - percentEndgame()));
+                kingSafety[square-1] = (byte) (modifier * 5 * (1 - percentEndgame()));
             }
         }
         if (piece == 5) {
@@ -572,14 +585,14 @@ class Position {
             long[] data = passedPawns();
             double specialModifier = modifier;
             if (piece == 11) {
-                if ((data[0] & (1L << (square - 1))) != 0) specialModifier += 4 * percentEndgame(); //passer
-                if ((data[2] & (1L << (square - 1))) != 0) specialModifier += 2 * percentEndgame(); //potential passer
-                if ((data[4] & (1L << (square - 1))) != 0) specialModifier += percentEndgame(); //neighbors a potential passer
+                if ((data[0] & (1L << (square - 1))) != 0) specialModifier *= (1 + 4 * percentEndgame()); //passer
+                if ((data[2] & (1L << (square - 1))) != 0) specialModifier *= (1 + 2 * percentEndgame()); //potential passer
+                if ((data[4] & (1L << (square - 1))) != 0) specialModifier *= (1 + percentEndgame()); //neighbors a potential passer
             }
             if (piece == 12) {
-                if ((data[1] & (1L << (square - 1))) != 0) specialModifier += 4 * percentEndgame();
-                if ((data[3] & (1L << (square - 1))) != 0) specialModifier += 2 * percentEndgame();
-                if ((data[5] & (1L << (square - 1))) != 0) specialModifier += percentEndgame();
+                if ((data[1] & (1L << (square - 1))) != 0) specialModifier *= (1 + 4 * percentEndgame());
+                if ((data[3] & (1L << (square - 1))) != 0) specialModifier *= (1 + 2 * percentEndgame());
+                if ((data[5] & (1L << (square - 1))) != 0) specialModifier *= (1 + percentEndgame());
             }
             space[square-1] = (byte) Math.round(specialModifier * addition);
         }
@@ -674,7 +687,7 @@ class Position {
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
 
-        byte[][] getMoves = generateMoves();
+        byte[][] getMoves = generateMoves(true);
         for (int i = 0; i < getMoves[0].length; i++) {
             System.out.print(ChessProject.parseNumbers(getMoves[0][i], getMoves[1][i]));
             if (i < getMoves[0].length-1) System.out.print(", ");
@@ -1012,7 +1025,7 @@ class Position {
             (Reference.getBitboard(king, occupied, 12) & pieceBoard[10]) != 0
         );
     }
-    byte[][] generateMoves() {
+    byte[][] generateMoves(boolean includeKingMoves) {
         //this is the culmination of everything else above
         long squares = occupiedSquares(position[0] == 1);
         int quantity = 0;
@@ -1020,8 +1033,14 @@ class Position {
         long copyOfSquares = squares;
         while (copyOfSquares != 0) {
             int square = Long.numberOfTrailingZeros(copyOfSquares);
-            moves[square] = legalMoves(square+1);
-            quantity += Long.bitCount(moves[square]);
+            boolean castling = (square == 4 && position[1] == 1 &&
+            ((pieceBoard[4] & (1L << 7)) != 0) && isEmpty(5) && isEmpty(6)) || (square == 60 && position[3] == 1 && ((pieceBoard[5] & (1L << 63)) != 0)
+            && isEmpty(61) && isEmpty(62));
+            long movesToConsider = legalMoves(square+1);
+            if (includeKingMoves || castling || (!piecePresent(1, square+1) && !piecePresent(2, square+1)) || inCheck() || percentEndgame() > 0.5 || activePieces() > 6) {
+                moves[square] = movesToConsider;
+                quantity += Long.bitCount(movesToConsider);
+            }
             copyOfSquares &= (copyOfSquares-1);
         }
         byte[][] output = new byte[2][quantity];
@@ -1043,7 +1062,6 @@ class Position {
     byte[][] sortMoves(byte[][] unsortedMoves) {
         sortHistory();
         int[][] moves = new int[unsortedMoves[0].length][3]; //from, to, score
-        boolean isEndgame = endgame();
         int[] data = getInfo();
         /*score based on:
         1. cached best move
@@ -1054,8 +1072,7 @@ class Position {
         - Rank forward and center-seeking moves above backward moves
         - Rank pawn moves close to promotion higher
         - Rank far advanced rook moves higher
-        - if endgame() rank center-seeking king moves higher
-        - if !endgame() rank moves that push pawns in front of the king lower
+        - Rank king moves toward the center higher towards the endgame
         */
         //output += pieceActivity[i] + material[i] + centralControl[i] + kingSafety[i] + space[i]+ rooksSeventh[i] + outposts[i];
         for (int i = 0; i < moves.length; i++) {
@@ -1075,9 +1092,6 @@ class Position {
             int modifier = (pieceColor) ? 1 : -1;
             double pieceModifier = 1.0d; //helps prioritize certain pieces over others
             switch (piece) {
-                case 1: case 2:
-                    pieceModifier = 0.7;
-                    break;
                 case 3: case 4:
                     pieceModifier = 0.8;
                     break;
@@ -1137,11 +1151,9 @@ class Position {
             double startProximity = Math.hypot(ChessProject.getX(start) - 4.5, ChessProject.getY(start) - 4.5);
             double endProximity = Math.hypot(ChessProject.getX(end) - 4.5, ChessProject.getY(end) - 4.5);
             int centerGain = (int) Math.round(startProximity - endProximity);
-            if (isEndgame) {
-                if (piece == 1 || piece == 2) cumulative += 3 * centerGain;
-            } else {
-                if (piece != 1 && piece != 2) cumulative += centerGain;
-            }
+            if (piece == 1 || piece == 2) cumulative += (int) Math.round(centerGain * percentEndgame() * 1.5); //king moves in the endgame are more important
+            else cumulative += centerGain;
+            
             //reward forward moves
             cumulative += (pieceColor) ? ChessProject.getY(end) - ChessProject.getY(start) : ChessProject.getY(start) - ChessProject.getY(end);
             if (piece == 11 || piece == 12) {
@@ -1150,12 +1162,10 @@ class Position {
                 if (farAdvanced) {
                     cumulative += 20;
                 }
-                //punish pawn moves in front of king if !endgame()
-                if (!isEndgame) {
-                    int king = (pieceColor) ? 1 : 2;
-                    if (piecePresent(king, ChessProject.translate(start, 0, -modifier))) {
-                        cumulative -= 15;
-                    }
+                //punish pawn moves in front of king if it's not the endgame
+                int king = (pieceColor) ? 1 : 2;
+                if (piecePresent(king, ChessProject.translate(start, 0, -modifier))) {
+                    cumulative -= (int) Math.round(20 * (1 - percentEndgame()));
                 }
             }
             if (piece == 5 || piece == 6) {
@@ -1188,7 +1198,7 @@ class Position {
         return !isEmpty(end) || ((piece == 11 || piece == 12) && end == position[5]) || (piece == 11 && end >= 57) || (piece == 12 && end <= 8);
     }
     int gameStatus() {
-        return gameStatus(generateMoves());
+        return gameStatus(generateMoves(true));
     }
     int gameStatus(byte[][] moves) {
         if (moves[0].length == 0) {
@@ -1210,18 +1220,11 @@ class Position {
         if (blackPieces == 2 && blackKnights < 2) return true;
         return false;
     }
-    boolean endgame() {
-        //if queens are on, return true if they're the only pieces (queen endgame)
-        //if queens are off, return false if both pairs of rooks and one minor piece for each side is on (queenless middlegame)
-        if ((pieceBoard[2] | pieceBoard[3]) != 0) return (pieceBoard[4] | pieceBoard[5] | pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0;
-        return !(Long.bitCount(pieceBoard[4] | pieceBoard[5]) >= 3 && Long.bitCount(pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) >= 2);
-    }
     boolean pawnEndgame() {
         //if true, zugzwang may happen at some point -> cancel the null move prune
         return (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0;
     }
     double percentEndgame() {
-        if (endgame()) return 1.0;
         int endgameScore = 0; //the higher, the less of an endgame it is, above 1000 it's a middlegame
         endgameScore += Long.bitCount(pieceBoard[2] | pieceBoard[3]) * 400; //queens
         endgameScore += Long.bitCount(pieceBoard[4] | pieceBoard[5]) * 200; //rooks
@@ -1343,7 +1346,7 @@ class Position {
             if (!checked && !isTacticalMove(moves[0][i], moves[1][i])) continue;
             makeMove(moves[0][i], moves[1][i]);
             int potential;
-            potential = evalQ(sortMoves(generateMoves()), alpha, beta, true);
+            potential = evalQ(sortMoves(generateMoves(true)), alpha, beta, true);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1357,7 +1360,7 @@ class Position {
         return best;
     }
     int[] evalDepth(int depth, int alpha, int beta) throws TimeExceededException {
-        byte[][] unorderedMoves = generateMoves();
+        byte[][] unorderedMoves = generateMoves(false);
         switch (gameStatus(unorderedMoves)) {
             case 1: return new int[]{Integer.MAX_VALUE, 0, 0};
             case 2: return new int[]{Integer.MIN_VALUE, 0, 0};
