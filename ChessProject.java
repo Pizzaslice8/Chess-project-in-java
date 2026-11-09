@@ -1399,7 +1399,7 @@ class Position {
         boolean maximizing = position[0] == 1;
         //null move pruning
         boolean hasNullMoveBound = maximizing ? beta < Integer.MAX_VALUE : alpha > Integer.MIN_VALUE;
-        if (depth > 2 && hasNullMoveBound && !pawnEndgame() && !inCheck() && depth < maxDepth) { //don't want to do this at the root node
+        if (depth > 2 && hasNullMoveBound && !pawnEndgame() && !inCheck() && depth < maxDepth && activePieces() > 2) { //don't want to do this at the root node
             int[] evalPass;
             int enPassantSquare = position[5];
             position[0] = 1 - position[0]; //make a null move
