@@ -150,8 +150,8 @@ public class ChessProject {
         if (setup[70] < 0 || setup[71] < 1) {
             throw new InvalidFENException("Invalid FEN element 5 or 6: move counters");
         }
-        System.out.print("Depth (number of full moves): ");
-        int depth = scanner.nextInt() * 2;
+        System.out.print("Depth: ");
+        int depth = scanner.nextInt();
         System.out.print("Time limit: ");
         int timeLimit = scanner.nextInt();
         Position pos = new Position(setup, timeLimit * 1000, depth);
@@ -506,11 +506,21 @@ class Position {
         int modifier = (ChessProject.color(piece)) ? 1 : -1;
         int sameColorPawn = (23 - modifier) / 2;
         long pieceVision = Reference.getBitboard(square-1, occupiedSquares(), piece);
-        if ((pieceVision & (1L << 27)) != 0) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
-        if ((pieceVision & (1L << 28)) != 0) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
-        if ((pieceVision & (1L << 35)) != 0) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
-        if ((pieceVision & (1L << 36)) != 0) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        if ((pieceVision & (1L << 27)) != 0 && piece != 1 && piece != 2) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        if ((pieceVision & (1L << 28)) != 0 && piece != 1 && piece != 2) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        if ((pieceVision & (1L << 35)) != 0 && piece != 1 && piece != 2) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        if ((pieceVision & (1L << 36)) != 0 && piece != 1 && piece != 2) centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
         material[square-1] = (byte) ChessProject.materialWorth(piece);
+        if (piece == 1 || piece == 2) {
+            double endgame = percentEndgame();
+            double kingDistance = Math.hypot(ChessProject.getX(square) - 4.5, ChessProject.getY(square) - 4.5);
+            pieceActivity[square-1] = (byte) Math.round(modifier * 2 * (10 - kingDistance * 1.7) * endgame);
+            int pawnShield = 0;
+            if (piecePresent(sameColorPawn, ChessProject.translate(square, 0, modifier))) pawnShield += 10;
+            if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, modifier))) pawnShield += 5;
+            if (piecePresent(sameColorPawn, ChessProject.translate(square, -1, modifier))) pawnShield += 5;
+            kingSafety[square-1] = (byte) Math.round(modifier * pawnShield * (1 - endgame));
+        }
         if (piece == 3 || piece == 4) {
             pieceActivity[square-1] = (byte) (modifier * Long.bitCount(pieceVision) / 2);
         } else if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
@@ -520,7 +530,6 @@ class Position {
             int equivalentY = 9 - ChessProject.getY(square);
             int equivalent = ChessProject.getX(square) + 8 * (equivalentY - 1);
             pieceActivity[square-1] = (byte) (modifier * Reference.knightBonus[(piece == 9) ? square-1 : equivalent-1]);
-
             if (ChessProject.getY(square) == ((piece == 9) ? 5 : 4) || ChessProject.getY(square) == ((piece == 9) ? 6 : 3)) {
                 //knight outposts typically only apply on 5th and 6th rank (white), 4th and 3rd rank (black)
                 if (ChessProject.getX(square) >= 3 && ChessProject.getX(square) <= 6) {
@@ -534,19 +543,6 @@ class Position {
                         outposts[square-1] = (byte) (modifier * 4);
                     }
                 }
-            }
-        }
-        if (piece == 1 || piece == 2) {
-            double proximityToCenter = Math.hypot(ChessProject.getX(square) - 4.5, ChessProject.getY(square) - 4.5);
-            pieceActivity[square-1] = (byte) (modifier * 2 * (10 - Math.round(proximityToCenter * 1.7)) * percentEndgame());
-            if (piecePresent(sameColorPawn, ChessProject.translate(square, 0, modifier))) {
-                kingSafety[square-1] = (byte) (modifier * 10 * (1 - percentEndgame())); //pawn in front of king
-            }
-            if (piecePresent(sameColorPawn, ChessProject.translate(square, 1, modifier))) {
-                kingSafety[square-1] = (byte) (modifier * 5 * (1 - percentEndgame()));
-            }
-            if (piecePresent(sameColorPawn, ChessProject.translate(square, -1, modifier))) {
-                kingSafety[square-1] = (byte) (modifier * 5 * (1 - percentEndgame()));
             }
         }
         if (piece == 5) {
@@ -687,7 +683,7 @@ class Position {
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
 
-        byte[][] getMoves = generateMoves(true);
+        byte[][] getMoves = sortMoves(generateMoves(true));
         for (int i = 0; i < getMoves[0].length; i++) {
             System.out.print(ChessProject.parseNumbers(getMoves[0][i], getMoves[1][i]));
             if (i < getMoves[0].length-1) System.out.print(", ");
@@ -710,6 +706,10 @@ class Position {
         System.out.println(outpostsCount);
         System.out.print("Number of really active pieces: ");
         System.out.println(activePieces());
+        System.out.print("Endgame multiplier: ");
+        System.out.println(percentEndgame());
+        System.out.print("Static evaluation: ");
+        System.out.println(currentCount(false));
     }
     // Hot paths!
     long legalMovesBasic(int square) {
@@ -787,7 +787,6 @@ class Position {
         undoDeep++;
         int piece = mailbox[start-1];
         int captured = mailbox[end-1];
-        boolean epBefore = position[5] != 0;
         if (piece != 11 && piece != 12) {
             position[5] = 0;
         }
@@ -1033,14 +1032,9 @@ class Position {
         long copyOfSquares = squares;
         while (copyOfSquares != 0) {
             int square = Long.numberOfTrailingZeros(copyOfSquares);
-            boolean castling = (square == 4 && position[1] == 1 &&
-            ((pieceBoard[4] & (1L << 7)) != 0) && isEmpty(5) && isEmpty(6)) || (square == 60 && position[3] == 1 && ((pieceBoard[5] & (1L << 63)) != 0)
-            && isEmpty(61) && isEmpty(62));
             long movesToConsider = legalMoves(square+1);
-            if (includeKingMoves || castling || (!piecePresent(1, square+1) && !piecePresent(2, square+1)) || inCheck() || percentEndgame() > 0.5 || activePieces() > 6) {
-                moves[square] = movesToConsider;
-                quantity += Long.bitCount(movesToConsider);
-            }
+            moves[square] = movesToConsider;
+            quantity += Long.bitCount(movesToConsider);
             copyOfSquares &= (copyOfSquares-1);
         }
         byte[][] output = new byte[2][quantity];
@@ -1074,7 +1068,6 @@ class Position {
         - Rank far advanced rook moves higher
         - Rank king moves toward the center higher towards the endgame
         */
-        //output += pieceActivity[i] + material[i] + centralControl[i] + kingSafety[i] + space[i]+ rooksSeventh[i] + outposts[i];
         for (int i = 0; i < moves.length; i++) {
             int start = unsortedMoves[0][i];
             int end = unsortedMoves[1][i];
@@ -1151,8 +1144,7 @@ class Position {
             double startProximity = Math.hypot(ChessProject.getX(start) - 4.5, ChessProject.getY(start) - 4.5);
             double endProximity = Math.hypot(ChessProject.getX(end) - 4.5, ChessProject.getY(end) - 4.5);
             int centerGain = (int) Math.round(startProximity - endProximity);
-            if (piece == 1 || piece == 2) cumulative += (int) Math.round(centerGain * percentEndgame() * 1.5); //king moves in the endgame are more important
-            else cumulative += centerGain;
+            if (piece != 1 && piece != 2) cumulative += centerGain;
             
             //reward forward moves
             cumulative += (pieceColor) ? ChessProject.getY(end) - ChessProject.getY(start) : ChessProject.getY(start) - ChessProject.getY(end);
@@ -1302,10 +1294,8 @@ class Position {
         int higher = (Integer.MAX_VALUE - 50 > previousResult[0]) ? previousResult[0] + 50 : Integer.MAX_VALUE;
         //in case previousResult[0] is less than 50 away from Integer.MAX_VALUE
         int[] shallowSearch = evalDepth(depth, lower, higher);
-        if (shallowSearch[0] == higher || shallowSearch[0] == lower)
-        //the shallow search returned a bound, need to do a full search
-        return evalDepth(depth);
-        else return shallowSearch;
+        if (shallowSearch[0] >= higher || shallowSearch[0] <= lower) return evalDepth(depth);
+        return shallowSearch;
     }
     int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval) {
         switch (gameStatus(sortedMoves)) {
