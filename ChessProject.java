@@ -1419,7 +1419,7 @@ class Position {
         int bestEnd = 0;
         for (int i = 0; i < moves[0].length; i++) {
             boolean nodeInCheck = inCheck();
-            boolean reduce = depth > 2 && i >= 3 && !isTacticalMove(moves[0][i], moves[1][i]) && nodeInCheck; 
+            boolean reduce = depth > 2 && i >= 3 && !isTacticalMove(moves[0][i], moves[1][i]) && !nodeInCheck; 
             makeMove(moves[0][i], moves[1][i]); //color to move is now flipped
             boolean givesCheck = inCheck();
             int potential;
