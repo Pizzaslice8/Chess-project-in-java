@@ -13,6 +13,14 @@ public class ChessProject {
         & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\ChessProject.java"
         TEST POSITION:
         r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 w - - 0 9
+
+        THINGS TO CHANGE:
+        getHistory
+        getInfo
+        extractMove
+        generateMoves
+        sortMoves
+        passedPawns
         */
         try {
             run();
@@ -263,7 +271,7 @@ public class ChessProject {
                 long start = System.nanoTime();
                 nodes = 0;
                 try {
-                    lastCompleted = pos.evalDepth(i);
+                    lastCompleted = pos.evalDepth(i, lastCompleted);
                 } catch (TimeExceededException t) {
                     printRed("Search exceeded execution time at depth: " + i);
                     int raw;
@@ -1154,7 +1162,7 @@ class Position {
     byte[][] sortMoves(byte[][] unsortedMoves) {
         sortHistory();
         int[][] moves = new int[unsortedMoves[0].length][3]; //from, to, score
-        //int[] data = getInfo();
+        int[] data = getInfo();
         /*score based on:
         1. cached best move
         2. captures, most valuable victim, least valuable attacker
@@ -1398,7 +1406,7 @@ class Position {
         if (shallowSearch[0] >= higher || shallowSearch[0] <= lower) return evalDepth(depth);
         return shallowSearch;
     }
-    int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval, boolean printData) {
+    int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval) {
         switch (gameStatus(sortedMoves)) {
             case 1: return Integer.MAX_VALUE;
             case 2: return Integer.MIN_VALUE;
@@ -1424,11 +1432,6 @@ class Position {
                     update(i);
                 }
                 best = currentCount(false);
-                if (printData) {
-                    System.out.printf("To move: %s, In check: %b, Alpha: %d, Beta: %d, Best: %d%n Boardstate:%n",
-                    ((position[0] == 1) ? "white" : "black"), checked, alpha, beta, best);
-                    display();
-                }
             }
             if (maximizing) {
                 if (best >= beta) return best;
@@ -1442,7 +1445,7 @@ class Position {
             if (!checked && !isTacticalMove(moves[0][i], moves[1][i])) continue;
             makeMove(moves[0][i], moves[1][i]);
             int potential;
-            potential = evalQ(sortMoves(generateMoves(true)), alpha, beta, true, false);
+            potential = evalQ(sortMoves(generateMoves(true)), alpha, beta, true);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1514,7 +1517,7 @@ class Position {
             }
         }
         byte[][] moves = sortMoves(unorderedMoves);
-        if (depth == 0) return new int[]{evalQ(moves, alpha, beta, true, (pieceBoard[1] == (1L << 62))), 0, 0};
+        if (depth == 0) return new int[]{evalQ(moves, alpha, beta, true), 0, 0};
         int evaluation = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
         int bestStart = 0;
         int bestEnd = 0;
