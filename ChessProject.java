@@ -37,9 +37,6 @@ public class ChessProject {
         }
     }
     static long nodes = 0L;
-    static int getTime() {
-        return (int) (System.nanoTime() / 1000000.0);
-    }
     static void printRed(String stuff) {
         System.out.print("\u001B[31m");
         System.out.print(stuff);
@@ -55,11 +52,17 @@ public class ChessProject {
         try {Thread.sleep(500);} catch (InterruptedException ie) {}
         System.out.print("FEN: ");
         String fen = scanner.nextLine();
+        //String pgn = "";
         if (fen.equals("TEST POSITION")) {
             fen = "r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 w - - 0 9";
         } else if (fen.equals("TEST POSITION REVERSED")) {
             fen = "r1bq1rk1/1pp2pp1/2np1n1p/p1b1p3/2B1P3/2PP1N1P/PP3PP1/RNBQR1K1 b - - 0 9";
-        } else if (Reference.openings.containsKey(fen)) {
+        }/* else if (fen.equals("PGN")) {
+            fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+            System.out.print("PGN: ");
+            pgn = scanner.nextLine();
+        }*/
+        else if (Reference.openings.containsKey(fen)) {
             System.out.println(Reference.openings.get(fen));
             return;
         }
@@ -155,6 +158,91 @@ public class ChessProject {
         System.out.print("Time limit: ");
         int timeLimit = scanner.nextInt();
         Position pos = new Position(setup, timeLimit * 1000, depth);
+        /*if (!pgn.isEmpty()) {
+            String[] parts = pgn.split("\\s+");
+            boolean annotation = false;
+            for (String part : parts) {
+                if (part.equals("*") || (part.contains("-") && !part.matches("(^O)(O$)") && !part.matches("(^0)(0$)")) || part.startsWith("$")) continue;
+                if (part.startsWith(";") || part.startsWith("{") || part.startsWith("(")) annotation = true;
+                if (part.matches("^[0-9]+\\.$") || part.endsWith("}") || part.endsWith(")")) annotation = false;
+                else if (!annotation) {
+                    if (part.endsWith("!") || part.endsWith("?")) part = part.substring(0, part.length()-1);
+                    if (part.endsWith("?") || part.endsWith("!")) part = part.substring(0, part.length()-1); //in case the original had "!?" or "?!"
+                    if (part.endsWith("+") || part.endsWith("#")) part = part.substring(0, part.length()-1);
+                    if (part.matches("^[0-9]+\\.+")) {
+                        do {
+                            part.substring(0, part.length()-1);
+                        }
+                        while (part.matches("^\\.+"));
+                    }
+                    if (part.equals("O-O") || part.equals("O_O") || part.equals("0-0") || part.equals("0_0")) {
+                        if (pos.position[0] == 1) pos.makeMove(5, 7);
+                        else pos.makeMove(61, 63);
+                    } else if (part.equals("O-O-O") || part.equals("O_O_O") || part.equals("0-0-0") || part.equals("0_0_0")) {
+                        if (pos.position[0] == 1) pos.makeMove(5, 3);
+                        else pos.makeMove(61, 59);
+                    } else {
+                        if (part.endsWith("=N") || part.endsWith("=B") || part.endsWith("=R")) throw new RuntimeException("Underpromotion not supported :(");
+                        if (part.endsWith("=Q")) part = part.substring(0, part.length()-2);
+                        int length = part.length();
+                        int piece, destination = parseSquare(part.substring(length-2));
+                        if (part.equals(part.toLowerCase())) {
+                            piece = 12 - pos.position[0];
+                            if (length > 2) {
+                                //only possible configuration is [file letter] x [square] (4 characters)
+                                //example "exd4"
+                                int startFile = (int) (part.charAt(0));
+                                int endFile = (int) (part.charAt(2));
+                                if (piece == 11) {
+                                    if (endFile > startFile) pos.makeMove(destination-9, destination); //capture towards h
+                                    else if (startFile > endFile) pos.makeMove(destination-7, destination); //capture towards a
+                                }
+                                if (piece == 12) {
+                                    if (endFile > startFile) pos.makeMove(destination+7, destination); //capture towards h
+                                    else if (startFile > endFile) pos.makeMove(destination+9, destination);
+                                }
+                            } else {
+                                //example "e4"
+                                if (piece == 11) {
+                                    if (getY(destination) == 4 && !pos.piecePresent(11, destination-8)) pos.makeMove(destination-16, destination);
+                                    else pos.makeMove(destination-8, destination);
+                                }
+                                if (piece == 12) {
+                                    if (getY(destination) == 5 && !pos.piecePresent(12, destination+8)) pos.makeMove(destination+16, destination);
+                                    else pos.makeMove(destination+8, destination); 
+                                }
+                            }
+                        }
+                        else {
+                            //have to dodge the 'x' in captures
+                            piece = getId(part.charAt(0));
+                            if ((part.contains("x") && length > 4) || (!part.contains("x") && length > 3)) {
+                                //example "Nbd2", "N1e2", "Qb8d6" in case one promotes 3 queens
+                                if (Character.isDigit(part.charAt(1))) {
+                                    //rank disambiguation
+                                    int rankAsInt = part.charAt(1) - 49;
+                                    int start = Long.numberOfTrailingZeros(pos.pieceBoard[piece-1] & pos.rankref[rankAsInt]) + 1;
+                                    pos.makeMove(start, destination);
+                                } else {
+                                    if (Character.isDigit(part.charAt(2))) pos.makeMove(parseSquare(part.substring(1, 3)), destination);
+                                    else {
+                                        //file disambiguation
+                                        int fileAsInt = part.charAt(1) - 97;
+                                        int start = Long.numberOfTrailingZeros(pos.pieceBoard[piece-1] & pos.fileref[fileAsInt]) + 1;
+                                        pos.makeMove(start, destination);
+                                    }
+                                }
+                            } else {
+                                //example "Nf3", "Nxe5"
+                                long visionFrom = Reference.getBitboard(destination-1, pos.occupiedSquares(), piece);
+                                long pieceBits = pos.pieceBoard[piece-1];
+                                pos.makeMove(Long.numberOfTrailingZeros(pieceBits & visionFrom) + 1, destination);
+                            }
+                        }
+                    }
+                }
+            }
+        }*/
         pos.display();
         pos.displayStats();
         switch (pos.gameStatus()) {
@@ -168,14 +256,14 @@ public class ChessProject {
                 break;
         }
         int[] lastCompleted = null;
-        if (depth > 0) {
-            for (int i = 1; i <= depth; i++){
-                System.out.println("Running at depth: " + Integer.toString(i));
+        if (depth >= 0) {
+            for (int i = 0; i <= depth; i++){
+                System.out.printf("Running at depth: %d%n", i);
                 System.out.println("Calculating...");
-                double start = getTime();
+                long start = System.nanoTime();
                 nodes = 0;
                 try {
-                    lastCompleted = pos.evalDepth(i, lastCompleted);
+                    lastCompleted = pos.evalDepth(i);
                 } catch (TimeExceededException t) {
                     printRed("Search exceeded execution time at depth: " + i);
                     int raw;
@@ -184,33 +272,32 @@ public class ChessProject {
                         raw = lastCompleted[0];
                         rawEval = raw;
                         evaluation = rawEval / 10.0;
-                        System.out.println("Evaluation: " + Double.toString(evaluation));
+                        System.out.printf("Evaluation: %f%n", evaluation);
                         System.out.println("Best move: " + parseNumbers(lastCompleted[1], lastCompleted[2]));
                     } else {
                         byte[][] legalMoves = pos.sortMoves(pos.generateMoves(true));
                         raw = pos.currentCount(false);
                         rawEval = raw;
                         evaluation = rawEval / 10.0;
-                        System.out.println("Evaluation: " + Double.toString(evaluation));
+                        System.out.printf("Evaluation: %f%n", evaluation);
                         System.out.println("Best move: " + parseNumbers(legalMoves[0][0], legalMoves[1][0]));
                     }
                     return;
                 }
-                double end = getTime();
-                double timeTaken = (end - start) / 1000.0;
+                double timeTaken = (System.nanoTime() - start) / 1000000000.0;
                 int raw = lastCompleted[0];
                 double rawEval = raw;
                 double evaluation = rawEval / 10.0; // convert decipawns (1/10 pawn) to pawns
                 if (evaluation == 214748364.7 || evaluation == -214748364.8) {
                     System.out.print("\u001b[33m");
-                    System.out.print("Evaluation: " + Double.toString(evaluation));
+                    System.out.printf("Evaluation: %f", evaluation);
                     System.out.print("\u001b[0m");
                     System.out.print("\n");
                 }
-                else System.out.println("Evaluation: " + Double.toString(evaluation));
+                else System.out.printf("Evaluation: %f%n", evaluation);
                 System.out.println("Best move: " + parseNumbers(lastCompleted[1], lastCompleted[2]));
-                System.out.println("Nodes per second: " + Double.toString(nodes / timeTaken));
-                System.out.println("in " + Double.toString(timeTaken) + " seconds\n");
+                System.out.printf("Nodes per second: %f%n", (nodes / timeTaken));
+                System.out.printf("in %f seconds%n%n", timeTaken);
             }
         }
     }
@@ -328,6 +415,16 @@ class Position {
     int[] killerMoves = new int[50];
     int[][] history = new int[5000][10];
     int historyStored = 0;
+    final long[] rankref = {
+        0xffL,
+        0x00ffL,
+        0x0000ffL,
+        0x000000ffL,
+        0x00000000ffL,
+        0x0000000000ffL,
+        0x000000000000ffL,
+        0x00000000000000ffL
+    };
     final long[] fileref = {
         0x1010101010100L,
         0x2020202020200L,
@@ -607,6 +704,7 @@ class Position {
         return (occupiedSquares() & (1L << (square-1))) == 0;
     }
     boolean piecePresent(int piece, int square) {
+        if (square == 0) return false;
         return (pieceBoard[piece-1] & (1L << (square-1))) != 0;
     }
     int kingSquare() {
@@ -807,14 +905,14 @@ class Position {
             case 1:
                 position[1] = 0;
                 position[2] = 0;
-                if (end == 3) {
+                if (start == 5 && end == 3) {
                     //white castle long
                     pieceBoard[4] |= (1L << 3);
                     pieceBoard[4] ^= 1L;
                     mailbox[3] = 5;
                     mailbox[0] = 0;
                 }
-                if (end == 7) {
+                if (start == 5 && end == 7) {
                     //white castle short
                     pieceBoard[4] |= (1L << 5);
                     pieceBoard[4] ^= (1L << 7);
@@ -825,14 +923,14 @@ class Position {
             case 2:
                 position[3] = 0;
                 position[4] = 0;
-                if (end == 59) {
+                if (start == 61 && end == 59) {
                     //black castle long
                     pieceBoard[5] |= (1L << 59);
                     pieceBoard[5] ^= (1L << 56);
                     mailbox[59] = 6;
                     mailbox[56] = 0;
                 }
-                if (end == 63) {
+                if (start == 61 && end == 63) {
                     //black castle short
                     pieceBoard[5] |= (1L << 61);
                     pieceBoard[5] ^= (1L << 63);
@@ -1056,7 +1154,7 @@ class Position {
     byte[][] sortMoves(byte[][] unsortedMoves) {
         sortHistory();
         int[][] moves = new int[unsortedMoves[0].length][3]; //from, to, score
-        int[] data = getInfo();
+        //int[] data = getInfo();
         /*score based on:
         1. cached best move
         2. captures, most valuable victim, least valuable attacker
@@ -1085,6 +1183,9 @@ class Position {
             int modifier = (pieceColor) ? 1 : -1;
             double pieceModifier = 1.0d; //helps prioritize certain pieces over others
             switch (piece) {
+                case 1: case 2:
+                    pieceModifier = 0.7;
+                    break;
                 case 3: case 4:
                     pieceModifier = 0.8;
                     break;
@@ -1297,7 +1398,7 @@ class Position {
         if (shallowSearch[0] >= higher || shallowSearch[0] <= lower) return evalDepth(depth);
         return shallowSearch;
     }
-    int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval) {
+    int evalQ(byte[][] sortedMoves, int alpha, int beta, boolean changeEval, boolean printData) {
         switch (gameStatus(sortedMoves)) {
             case 1: return Integer.MAX_VALUE;
             case 2: return Integer.MIN_VALUE;
@@ -1323,6 +1424,11 @@ class Position {
                     update(i);
                 }
                 best = currentCount(false);
+                if (printData) {
+                    System.out.printf("To move: %s, In check: %b, Alpha: %d, Beta: %d, Best: %d%n Boardstate:%n",
+                    ((position[0] == 1) ? "white" : "black"), checked, alpha, beta, best);
+                    display();
+                }
             }
             if (maximizing) {
                 if (best >= beta) return best;
@@ -1336,7 +1442,7 @@ class Position {
             if (!checked && !isTacticalMove(moves[0][i], moves[1][i])) continue;
             makeMove(moves[0][i], moves[1][i]);
             int potential;
-            potential = evalQ(sortMoves(generateMoves(true)), alpha, beta, true);
+            potential = evalQ(sortMoves(generateMoves(true)), alpha, beta, true, false);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1385,10 +1491,7 @@ class Position {
                 }
             }
         }
-        int start = 0;
-        if (depth == maxDepth) {
-            start = ChessProject.getTime();
-        }
+        long start = System.nanoTime();
         boolean maximizing = position[0] == 1;
         //null move pruning
         boolean hasNullMoveBound = maximizing ? beta < Integer.MAX_VALUE : alpha > Integer.MIN_VALUE;
@@ -1411,16 +1514,12 @@ class Position {
             }
         }
         byte[][] moves = sortMoves(unorderedMoves);
-        if (depth == 0) {
-            return new int[]{evalQ(moves, alpha, beta, true), 0, 0};
-        }
+        if (depth == 0) return new int[]{evalQ(moves, alpha, beta, true, (pieceBoard[1] == (1L << 62))), 0, 0};
         int evaluation = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
         int bestStart = 0;
         int bestEnd = 0;
         for (int i = 0; i < moves[0].length; i++) {
-            boolean nodeInCheck = inCheck();
-            boolean reduce = depth > 2 && i >= 3 && !isTacticalMove(moves[0][i], moves[1][i]) && !nodeInCheck; 
-            makeMove(moves[0][i], moves[1][i]); //color to move is now flipped
+            makeMove(moves[0][i], moves[1][i]);
             int potential;
             try {
                 //principal variation search
@@ -1436,6 +1535,7 @@ class Position {
                         potential = (trial < beta) ? evalDepth(depth - 1, alpha, beta)[0] : trial;
                     }
                 }
+                potential = evalDepth(depth - 1, alpha, beta)[0];
             } finally {
                 restore();
             }
@@ -1459,13 +1559,8 @@ class Position {
                 break;
             }
         }
-        int timeTaken = 0;
-        if (depth == maxDepth) {
-            timeTaken = ChessProject.getTime() - start;
-            if (timeTaken > limit) {
-                throw new TimeExceededException();
-            }
-        }
+        double timeTaken = (System.nanoTime() - start) / 1000000000.0;
+        if (depth == maxDepth && timeTaken > limit) throw new TimeExceededException();
         bound = evaluation <= alphaOriginal ? 1 : evaluation >= betaOriginal ? -1 : 0;
         store(evaluation, bestStart, bestEnd, depth, bound);
         return new int[]{evaluation, bestStart, bestEnd};
