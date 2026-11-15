@@ -1,7 +1,6 @@
 import java.util.Scanner;
 import java.util.Arrays;
 import java.util.Random;
-import java.util.Comparator;
 import java.util.Objects;
 import java.lang.Math;
 
@@ -1066,7 +1065,7 @@ public class ChessProject {
         return (int) Math.round(cumulative * pieceModifier);
     }
     static int[] sortMoves() {
-        Arrays.sort(history, 0, historyStored, Comparator.comparingInt((int[] row) -> row[1]).reversed());
+        Arrays.sort(history, 0, historyStored, (a, b) -> Integer.compare(b[1], a[1]));
         long squares = occupiedSquares(position[0] == 1);
         long[] moveBoards = new long[64];
         int quantity = 0;
