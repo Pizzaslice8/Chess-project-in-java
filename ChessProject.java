@@ -8,6 +8,38 @@ public class ChessProject {
     /*
     PASTE INTO TERMINAL:
     & "C:\Users\cbh5981\Documents\jdk-27\bin\java.exe" "C:\Users\cbh5981\Documents\Chess-project-in-java\ChessProject.java"
+
+    FIX: update()
+
+    RECOMMENDATIONS FROM AI ASSISTANT:
+    Also fix Arrays.sort
+    The biggest gain is likely to avoid using the full `makeMove()`/`restore()` path just to test king safety.
+    In the current `legalMoves`, each candidate goes through `makeMove()`, which snapshots the board and position,
+    then `restore()` rebuilds the mailbox and recomputes the Zobrist hash. Most of that work isn’t needed to answer “would my king be in check?”
+
+    I’d approach it in stages:
+
+    1. **Avoid generating legal moves twice per search node.** `evalDepth()` checks `gameStatus()` and then calls `sortMoves()`,
+    which generates moves again; `evalQ()` has a similar pattern. Generate the legal move list once and use an empty list to identify checkmate or stalemate,
+    while still handling draw rules. This is a relatively contained optimization and may improve nodes per second before you redesign move legality.
+
+    2. **Add a fast legality filter using check and pin masks.** At the start of a position, find the king’s attackers and pinned friendly pieces:
+    - With **double check**, only generate king moves.
+    - With **single check**, a non-king move must capture the checker or block its line.
+    - A **pinned piece** can only move along the ray between its king and the pinning slider.
+    - For a **king move**, test attacks on the destination using occupancy with the king moved and any captured piece removed.
+    You don’t need to make the whole move.
+
+    3. **Handle the special cases explicitly.**
+    En passant can uncover a rook or bishop attack because it removes a pawn from a square other than the destination,
+    so test it with adjusted occupancy. Castling still needs its separate start/transit/destination attack checks.
+
+    For this engine, a useful middle ground is a small, specialized “would this move expose my king?” check that updates only the relevant bitboards
+    and occupancy—not `position`, mailbox, hash, and evaluation state.
+    Longer term, the check/pin-mask approach avoids even those tentative board updates for most moves.
+
+    Keep attack detection separate from legal move generation: pawn attack squares, for example,
+    matter for king safety even when those squares aren’t legal pawn moves.
     */
     static long empty, whiteToMove, blackToMove, zobristWCS, zobristWCL, zobristBCS, zobristBCL, nodes = 0L;
     static final int length = 0x800000; //around 8 million
