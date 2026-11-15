@@ -1208,7 +1208,7 @@ public class ChessProject {
         if (blackRooks == 1) return -3;
         return 0;
     }
-    static int evalQ(int[] sortedMoves, int alpha, int beta, boolean changeEval) {
+    static int evalQ(int alpha, int beta, boolean changeEval) {
         switch (gameStatus()) {
             case 1: return Integer.MAX_VALUE;
             case 2: return Integer.MIN_VALUE;
@@ -1223,7 +1223,7 @@ public class ChessProject {
                 : ((Integer.MIN_VALUE / 2) + sizeOfKingBox(checkmateMode));
         } //the smaller the box, the better
         nodes++;
-        int[] moves = sortedMoves;
+        int[] moves = sortMoves();
         boolean maximizing = position[0] == 1;
         boolean checked = inCheck();
         int best = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
@@ -1246,7 +1246,7 @@ public class ChessProject {
             if (!checked && !isTacticalMove(moves[i])) continue;
             makeMove(moves[i]);
             int potential;
-            potential = evalQ(sortMoves(), alpha, beta, true);
+            potential = evalQ(alpha, beta, true);
             restore();
             if (maximizing) {
                 best = Math.max(best, potential);
@@ -1328,7 +1328,7 @@ public class ChessProject {
             }
         }
         int[] moves = sortMoves();
-        if (depth == 0) return ((long)evalQ(moves, alpha, beta, true)) << 32;
+        if (depth == 0) return ((long)evalQ(alpha, beta, true)) << 32;
         int evaluation = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
         int bestMove = 0;
         for (int i = 0; i < moves.length; i++) {
