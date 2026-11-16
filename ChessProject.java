@@ -141,13 +141,13 @@ public class ChessProject {
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
     static final long[] rankref = {
         0xffL,
-        0x00ffL,
-        0x0000ffL,
-        0x000000ffL,
-        0x00000000ffL,
-        0x0000000000ffL,
-        0x000000000000ffL,
-        0x00000000000000ffL
+        0xff00L,
+        0xff0000L,
+        0xff000000L,
+        0xff00000000L,
+        0xff0000000000L,
+        0xff000000000000L,
+        0xff00000000000000L
     };
     static final long[] fileref = {
         0x1010101010100L,
@@ -253,15 +253,7 @@ public class ChessProject {
         return output;
     }
     static int occupancyIndex(long occupancy, long mask) {
-        int index = 0;
-        int bitIndex = 0;
-        while (mask != 0) {
-            long bit = mask & (-mask);
-            if ((occupancy & bit) != 0) index |= 1 << bitIndex;
-            mask ^= bit;
-            bitIndex++;
-        }
-        return index;
+        return (int) Long.compress(occupancy, mask);
     }
     //attack maps
     static long getBitboard(int square, long allPieces, int piece) {
@@ -1510,30 +1502,8 @@ public class ChessProject {
         for (int i = 0; i < 64; i++) {
             long[] rookAddition = new long[1 << Long.bitCount(rookVision[i])];
             long[] bishopAddition = new long[1 << Long.bitCount(bishopVision[i])];
-            for (int index = 0; index < rookAddition.length; index++) {
-                long occupancy = 0L;
-                long remainingMask = rookVision[i];
-                int bitIndex = 0;
-                while (remainingMask != 0) {
-                    long bit = remainingMask & (-remainingMask);
-                    if ((index & (1 << bitIndex)) != 0) occupancy |= bit;
-                    remainingMask ^= bit;
-                    bitIndex++;
-                }
-                rookAddition[index] = fillWithRook(i, occupancy);
-            }
-            for (int index = 0; index < bishopAddition.length; index++) {
-                long occupancy = 0L;
-                long remainingMask = bishopVision[i];
-                int bitIndex = 0;
-                while (remainingMask != 0) {
-                    long bit = remainingMask & (-remainingMask);
-                    if ((index & (1 << bitIndex)) != 0) occupancy |= bit;
-                    remainingMask ^= bit;
-                    bitIndex++;
-                }
-                bishopAddition[index] = fillWithBishop(i, occupancy);
-            }
+            for (int index = 0; index < rookAddition.length; index++) rookAddition[index] = fillWithRook(i, Long.expand(index, rookVision[i]));
+            for (int index = 0; index < bishopAddition.length; index++) bishopAddition[index] = fillWithBishop(i, Long.expand(index, bishopVision[i]));
             rookAttacks[i] = rookAddition;
             bishopAttacks[i] = bishopAddition;
             //zobrist
