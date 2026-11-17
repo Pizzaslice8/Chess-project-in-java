@@ -114,22 +114,29 @@ public class ChessProject {
         0x807f808080808080L, 0xfe01010101010101L, 0xfd02020202020202L, 0xfb04040404040404L, 0xf708080808080808L,
         0xef10101010101010L, 0xdf20202020202020L, 0xbf40404040404040L, 0x7f80808080808080L
     };
+    static int[] moves = new int[512];
+    static long[] moveBoards = new long[64];
+    static long[] absolutePinRestrictions = new long[64];
+    static boolean[] whitePawnFiles = new boolean[8];
+    static boolean[] blackPawnFiles = new boolean[8];
     //bitboards
     static long[][] bishopAttacks = new long[64][];
     static long[][] rookAttacks = new long[64][];
     static int[] position = new int[7];
     static long currentZobrist;
     static long[] pieceBoard = new long[12];
-    static int[] mailbox = new int[64];
+    static byte[] mailbox = new byte[64];
     static int maxDepth;
     static long[][] undoStackPieces = new long[4096][12];
+    static byte[][] undoStackMailboxes = new byte[4096][64];
     static int[][] undoStackData = new int[4096][7];
     static boolean[] undoStackTactical = new boolean[4096];
     static boolean[] undoStackPawnStructureChanged = new boolean[4096];
+    static long[] undoStackZobrist = new long[4096];
     static int slot = 0;
     static int undoDeep = 0;
-    static int[] killerMoves = new int[64];
-    static long[] history = new long[length];
+    static boolean[] killerMoves = new boolean[4096];
+    static int[] history = new int[4096];
     static boolean[] transpositionOccupied = new boolean[length];
     static int historyStored = 0;
     //transposition table
@@ -159,23 +166,6 @@ public class ChessProject {
         0x40404040404000L,
         0x80808080808000L
     };
-    static long getZobrist() {
-        long out = empty;
-        for (int i = 0; i < 12; i++) {
-            long boardCopy = pieceBoard[i];
-            while (boardCopy != 0) {
-                out ^= zobrist[Long.numberOfTrailingZeros(boardCopy)][i];
-                boardCopy &= (boardCopy-1);
-            }
-        }
-        out ^= ((position[0] == 1) ? whiteToMove : blackToMove);
-        if (position[1] == 1) out ^= zobristWCS;
-        if (position[2] == 1) out ^= zobristWCL;
-        if (position[3] == 1) out ^= zobristBCS;
-        if (position[4] == 1) out ^= zobristBCL;
-        if (position[5] != 0) out ^= zobrist[position[5]-1][12];
-        return out;
-    }
     static int closestEdge(int square) {
         //1 = 1st rank, 2 = h-file, 3 = 9th rank, 4 = a-file
         int rank = square / 8;
@@ -344,26 +334,11 @@ public class ChessProject {
         return (piece % 2) == 1;
     }
     static void storeQuietMove(int move, int depth) {
-        //store killer move
-        for (int i = 0; i < 50; i++) {
-            if (killerMoves[i] == 0) {
-                killerMoves[i] = move;
-                break;
-            }
-        }
-        //store history
-        //return (((long) evaluation) << 32) | bestMove;
-        int index = -1;
-        for (int i = 0; i < historyStored; i++) {
-            if ((history[i] & rightBitsOnly) == move) {
-                index = i;
-                break;
-            }
-        }
-        if (index == -1) {
-            history[historyStored] = (history[historyStored] & leftBitsOnly) | move;
-            historyStored++;
-        } else history[index] += rightBitsOnly + 1;
+        int moveStart = extract(move, 0) - 1;
+        int moveEnd = extract(move, 1) - 1;
+        int requiredIndex = (moveStart << 6) | moveEnd;
+        killerMoves[requiredIndex] = true;
+        history[requiredIndex] = Math.min(history[requiredIndex], 500); //store history
     }
     static void store(int evaluation, int bestMove, int depth, int bound) {
         int index = (int)(currentZobrist & (length - 1));
@@ -403,6 +378,7 @@ public class ChessProject {
         int outputNontactical = 0;
         int materialDifferential = 0;
         double activePiecesModifier = Math.min(activePieces(), 4) / 4.0;
+        double endgamePercent = percentEndgame();
         for (int i = 0; i < 64; i++) {
             outputTactical += pieceActivity[i] + centralControl[i]
             + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
@@ -413,7 +389,7 @@ public class ChessProject {
         int tacticalOutput = outputTactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(true);
         int nontacticalOutput = outputNontactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(false);
         //material matters more in the endgame
-        double materialModifier = 1 + percentEndgame();
+        double materialModifier = 1 + endgamePercent;
         if ((pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]) == 0) {
             if ((pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0) {
                 //pawn endgame, any material advantage is practically decisive
@@ -422,8 +398,47 @@ public class ChessProject {
             //minor piece endgame, any material advantage is very important
             materialModifier = 3;
         }
-        return (int) Math.round(activePiecesModifier * tacticalOutput
-        + (1 - activePiecesModifier) * nontacticalOutput+ materialDifferential * materialModifier);
+        double subtotal = activePiecesModifier * tacticalOutput
+        + (1 - activePiecesModifier) * nontacticalOutput+ materialDifferential * materialModifier;
+        long whitePawns = pieceBoard[10];
+        long blackPawns = pieceBoard[11];
+        long whitePassers = passedPawns(1);
+        long whiteCandidates = passedPawns(2);
+        long whiteHelpers = passedPawns(3);
+        long blackPassers = passedPawns(4);
+        long blackCandidates = passedPawns(5);
+        long blackHelpers = passedPawns(6);
+        while (whitePassers != 0) {
+            int square = Long.numberOfTrailingZeros(whitePassers) + 1;
+            subtotal += 0.5 * getY(square) * getY(square) * endgamePercent;
+            whitePassers &= (whitePassers - 1);
+        }
+        while (whiteCandidates != 0) {
+            int square = Long.numberOfTrailingZeros(whiteCandidates) + 1;
+            subtotal += 0.3 * getY(square) * getY(square) * endgamePercent;
+            whiteCandidates &= (whiteCandidates - 1);
+        }
+        while (whiteHelpers != 0) {
+            int square = Long.numberOfTrailingZeros(whiteHelpers) + 1;
+            subtotal += 0.2 * getY(square) * getY(square) * endgamePercent;
+            whiteHelpers &= (whiteHelpers - 1);
+        }
+        while (blackPassers != 0) {
+            int square = Long.numberOfTrailingZeros(blackPassers) + 1;
+            subtotal -= 0.5 * (9 - getY(square)) * (9 - getY(square)) * endgamePercent;
+            blackPassers &= (blackPassers - 1);
+        }
+        while (blackCandidates != 0) {
+            int square = Long.numberOfTrailingZeros(blackCandidates) + 1;
+            subtotal -= 0.3 * (9 - getY(square)) * (9 - getY(square)) * endgamePercent;
+            blackCandidates &= (blackCandidates - 1);
+        }
+        while (blackHelpers != 0) {
+            int square = Long.numberOfTrailingZeros(blackHelpers) + 1;
+            subtotal -= 0.2 * (9 - getY(square)) * (9 - getY(square)) * endgamePercent;
+            blackHelpers &= (blackHelpers - 1);
+        }
+        return (int) Math.round(subtotal);
     }
     static int activePieces() {
         //test if both sides have a lot of really active pieces
@@ -534,24 +549,7 @@ public class ChessProject {
                 default:
                     break;
             }
-            double specialModifier = modifier;
-            if (piece == 11) {
-                if ((passedPawns(1) & (1L << (square - 1))) != 0)
-                specialModifier *= (1 + 4 * percentEndgame()); //passer
-                else if ((passedPawns(3) & (1L << (square - 1))) != 0)
-                specialModifier *= (1 + 2 * percentEndgame()); //potential passer
-                else if ((passedPawns(5) & (1L << (square - 1))) != 0)
-                specialModifier *= (1 + percentEndgame()); //neighbors a potential passer
-            }
-            if (piece == 12) {
-                if ((passedPawns(2) & (1L << (square - 1))) != 0)
-                specialModifier *= (1 + 4 * percentEndgame());
-                else if ((passedPawns(4) & (1L << (square - 1))) != 0)
-                specialModifier *= (1 + 2 * percentEndgame());
-                else if ((passedPawns(6) & (1L << (square - 1))) != 0)
-                specialModifier *= (1 + percentEndgame());
-            }
-            space[square-1] = (byte) Math.round(specialModifier * addition);
+            space[square-1] = (byte) Math.round(modifier * addition);
         }
     }
     static void updateEvaluation(long squares) {
@@ -830,7 +828,9 @@ public class ChessProject {
         || captured == 11 || captured == 12;
         undoStackTactical[undoDeep] = tacticalMove;
         undoStackPawnStructureChanged[undoDeep] = pawnStructureChanged;
+        undoStackZobrist[undoDeep] = currentZobrist;
         System.arraycopy(pieceBoard, 0, undoStackPieces[undoDeep], 0, 12);
+        System.arraycopy(mailbox, 0, undoStackMailboxes[undoDeep], 0, 64);
         System.arraycopy(position, 0, undoStackData[undoDeep], 0, 7);
         undoDeep++;
         if (position[5] != 0 && piece != 11 && piece != 12) {
@@ -861,7 +861,7 @@ public class ChessProject {
         }
         pieceBoard[piece-1] |= (1L << (end - 1));
         pieceBoard[piece-1] ^= (1L << (start - 1));
-        mailbox[end-1] = piece;
+        mailbox[end-1] = (byte) piece;
         mailbox[start-1] = 0;
         currentZobrist ^= zobrist[start-1][piece-1];
         currentZobrist ^= zobrist[end-1][piece-1];
@@ -1042,15 +1042,9 @@ public class ChessProject {
         long changedSquares = 0L;
         for (int i = 0; i < 12; i++) changedSquares |= (bitboardCopy[i] ^ pieceBoard[i]);
         System.arraycopy(bitboardCopy, 0, pieceBoard, 0, 12);
+        System.arraycopy(undoStackMailboxes[undoDeep], 0, mailbox, 0, 64);
         System.arraycopy(undoStackData[undoDeep], 0, position, 0, 7);
-        currentZobrist = getZobrist();
-        for (int i = 0; i < 64; i++) mailbox[i] = 0;
-        for (int i = 0; i < 12; i++) {
-            while (bitboardCopy[i] != 0) {
-                mailbox[Long.numberOfTrailingZeros(bitboardCopy[i])] = i+1;
-                bitboardCopy[i] &= (bitboardCopy[i]-1);
-            }
-        }
+        currentZobrist = undoStackZobrist[undoDeep];
         updateEvaluation(changedSquares);
         if (pawnStructureChanged) updatePawnStructureEvaluation();
         else if (tacticalMove) updateKingPawnEvaluation();
@@ -1150,14 +1144,12 @@ public class ChessProject {
             //max of difference is 360, for "pawn takes queen promotes to queen"
             return Integer.MAX_VALUE - 361 + difference;
         }
+        int neededIndex = ((start - 1) >> 64) | (end - 1);
         //killer moves heuristic
-        for (int killerMove : killerMoves) {
-            if (move == killerMove) return Integer.MAX_VALUE - 362;
-        }
+        if (killerMoves[neededIndex]) return Integer.MAX_VALUE - 362;
         //history heuristic
-        for (int j = 0; j < historyStored; j++) {
-            if (move == (history[j] & rightBitsOnly)) return Integer.MAX_VALUE - 363 - j;
-        }
+        int timesAppeared = history[neededIndex];
+        if (timesAppeared != 0) return (Integer.MAX_VALUE - 373) + timesAppeared;
         //quiet moves not principal or in killer moves or in history,
         //counting up from 0 as opposed to counting down from 2147483647
         int cumulative = 0;
@@ -1183,19 +1175,13 @@ public class ChessProject {
         }
         return (int) Math.round(cumulative * pieceModifier);
     }
-    static int[] sortMoves() {
-        Arrays.sort(history, 0, historyStored);
+    static int[] generateTacticalMoves() {
         long squares = occupiedSquares(position[0] == 1);
-        long[] moveBoards = new long[64];
-        long[] absolutePinRestrictions = new long[64];
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
         occupiedSquares(true) | occupiedSquares(false));
-        int quantity = 0;
-        long copyOfSquares = squares;
         long check = checkPieces();
-        if (Long.bitCount(check) > 1) {
-            for (int i = 0; i < 64; i++) absolutePinRestrictions[i] = -1L;
-        } else {
+        if (Long.bitCount(check) > 1) Arrays.fill(absolutePinRestrictions, -1L);
+        else {
             int checkingPiece = (check == 0) ? 0 : mailbox[Long.numberOfTrailingZeros(check)];
             long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
             while (friendlyPieces != 0) {
@@ -1213,35 +1199,63 @@ public class ChessProject {
                 friendlyPieces &= (friendlyPieces - 1);
             }
         }
-        while (copyOfSquares != 0) {
-            int square = Long.numberOfTrailingZeros(copyOfSquares);
-            long movesToConsider = legalMoves(square+1, check, opposingAttackMap, absolutePinRestrictions);
-            moveBoards[square] = movesToConsider;
-            quantity += Long.bitCount(movesToConsider);
-            copyOfSquares &= (copyOfSquares-1);
-        }
-        if (quantity == 0) return new int[0];
-        int[] moves = new int[quantity];
-        int i = 0;
-        copyOfSquares = squares;
-        while (copyOfSquares != 0) {
-            int square = Long.numberOfTrailingZeros(copyOfSquares);
-            long movesToConsider = moveBoards[square];
-            while (movesToConsider != 0) {
-                moves[i] = compress(square+1, Long.numberOfTrailingZeros(movesToConsider)+1, mailbox[square]);
-                i++;
-                movesToConsider &= (movesToConsider-1);
+        int quantity = 0;
+        for (int square = 0; square < 64; square++) {
+            if ((squares & (1L << square)) == 0) moveBoards[square] = 0L;
+            else {
+                long allMoves = legalMoves(square+1, check, opposingAttackMap, absolutePinRestrictions);
+                while (allMoves != 0) {
+                    int move = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1, mailbox[square]);
+                    if (isTacticalMove(move)) moves[quantity++] = move;
+                    allMoves &= (allMoves - 1);
+                }
             }
-            copyOfSquares &= (copyOfSquares-1);
         }
-        long[] scoredMoves = new long[moves.length];
-        for (int j = 0; j < moves.length; j++) {
+        return Arrays.copyOf(moves, quantity);
+    }
+    static int[] sortMoves() {
+        long squares = occupiedSquares(position[0] == 1);
+        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
+        occupiedSquares(true) | occupiedSquares(false));
+        long check = checkPieces();
+        if (Long.bitCount(check) > 1) Arrays.fill(absolutePinRestrictions, -1L);
+        else {
+            int checkingPiece = (check == 0) ? 0 : mailbox[Long.numberOfTrailingZeros(check)];
+            long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
+            while (friendlyPieces != 0) {
+                int pieceSquare = Long.numberOfTrailingZeros(friendlyPieces);
+                int pieceid = mailbox[pieceSquare];
+                pieceBoard[pieceid-1] ^= (1L << pieceSquare);
+                if (check != 0) pieceBoard[checkingPiece-1] ^= check;
+                long newCheckingPiece = checkPieces();
+                if (newCheckingPiece != 0) {
+                    int newSquare = Long.numberOfTrailingZeros(newCheckingPiece);
+                    absolutePinRestrictions[pieceSquare] = buildCheckRay(newSquare + 1, mailbox[newSquare]);
+                } else absolutePinRestrictions[pieceSquare] = -1L;
+                pieceBoard[pieceid-1] |= (1L << pieceSquare);
+                if (check != 0) pieceBoard[checkingPiece-1] |= check;
+                friendlyPieces &= (friendlyPieces - 1);
+            }
+        }
+        int quantity = 0;
+        for (int square = 0; square < 64; square++) {
+            if ((squares & (1L << square)) == 0) moveBoards[square] = 0L;
+            else {
+                long allMoves = legalMoves(square+1, check, opposingAttackMap, absolutePinRestrictions);
+                while (allMoves != 0) {
+                    moves[quantity++] = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1, mailbox[square]);
+                    allMoves &= (allMoves - 1);
+                }
+            }
+        }
+        long[] scoredMoves = new long[quantity];
+        for (int j = 0; j < quantity; j++) {
             int score = calculateScore(moves[j]);
             scoredMoves[j] = ((long) (~score) << 32) | (moves[j] & 0xffffffffL);
         }
         Arrays.sort(scoredMoves);
-        for (int j = 0; j < moves.length; j++) moves[j] = (int) scoredMoves[j];
-        return moves;
+        for (int j = 0; j < quantity; j++) moves[j] = (int) scoredMoves[j];
+        return Arrays.copyOf(moves, quantity);
     }
     static boolean isTacticalMove(int move) {
         int start = extract(move, 0);
@@ -1275,8 +1289,6 @@ public class ChessProject {
         1 = white passed pawns, 2 = black passed pawns, 3 = white passer candidates,
         4 = black passer candidates, 5 = white helpers, 6 = black helpers
         */
-        boolean[] whitePawnFiles = new boolean[8],
-        blackPawnFiles = new boolean[8];
         for (int i = 0; i < 8; i++) {
             whitePawnFiles[i] = (pieceBoard[10] & fileref[i]) != 0;
             blackPawnFiles[i] = (pieceBoard[11] & fileref[i]) != 0;
@@ -1342,11 +1354,6 @@ public class ChessProject {
         return 0;
     }
     static int evalQ(int alpha, int beta) {
-        int[] moves = sortMoves();
-        if (moves.length == 0) {
-            if (inCheck()) return (position[0] == 1) ? Integer.MIN_VALUE : Integer.MAX_VALUE;
-            return 0;
-        }
         int checkmateMode = simpleCheckmate();
         if (checkmateMode != 0) {
             nodes = Integer.MAX_VALUE / 2;
@@ -1368,8 +1375,9 @@ public class ChessProject {
                 beta = Math.min(beta, best);
             }
         }
+        //if checked, consider all legal moves, if not, only consider tactical moves
+        int[] moves = (inCheck()) ? sortMoves() : generateTacticalMoves();
         for (int i = 0; i < moves.length; i++) {
-            if (!checked && !isTacticalMove(moves[i])) continue;
             makeMove(moves[i]);
             int potential;
             potential = evalQ(alpha, beta);
@@ -1396,11 +1404,7 @@ public class ChessProject {
             if ((shallowSearch >> 32) < higher && (shallowSearch >> 32) > lower) return shallowSearch;
         }
         nodes++;
-        if (depth == maxDepth) {
-            killerMoves[0] = 0;
-            killerMoves[1] = 0;
-            killerMoves[2] = 0;
-        }
+        if (depth == maxDepth) Arrays.fill(killerMoves, false);
         int alphaOriginal = alpha;
         int betaOriginal = beta;
         int bound = 0;
@@ -1517,6 +1521,10 @@ public class ChessProject {
         zobristBCS = generator.nextLong(); //black castle short
         zobristBCL = generator.nextLong();
         currentZobrist = empty;
+        for (int i = 0; i < 8; i++) {
+            whitePawnFiles[i] = (pieceBoard[10] & fileref[i]) != 0;
+            blackPawnFiles[i] = (pieceBoard[11] & fileref[i]) != 0;
+        }
         Scanner scanner = new Scanner(System.in);
         System.out.println("done");
         int[] setup = new int[72];
@@ -1544,7 +1552,7 @@ public class ChessProject {
                         int id = getId(current);
                         if (id == 0) return 1;
                         int square = (row - 1) * 8 + column;
-                        mailbox[square-1] = id;
+                        mailbox[square-1] = (byte) id;
                         pieceBoard[id-1] |= (1L << (square-1));
                         currentZobrist ^= zobrist[square-1][id-1];
                         column++;
@@ -1635,8 +1643,9 @@ public class ChessProject {
                 int x2 = getX(moveEnd);
                 int y2 = getY(moveEnd);
                 System.out.printf("Best move: %c%d%c%d\n", ((char)(x1 + 96)), y1, ((char)(x2 + 96)), y2);
-                System.out.printf("Nodes per second: %f\n", (nodes / timeTaken));
-                System.out.printf("in %f seconds\n\n", timeTaken);
+                System.out.printf("in %f seconds\n", timeTaken);
+                System.out.printf("Total nodes searched: %d\n", nodes);
+                System.out.printf("Nodes per second: %f\n\n", (nodes / timeTaken));
             }
         }
         return 0;
