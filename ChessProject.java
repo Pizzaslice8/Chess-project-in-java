@@ -137,12 +137,14 @@ public class ChessProject {
     static int undoDeep = 0;
     static boolean[] killerMoves = new boolean[4096];
     static int[] history = new int[4096];
-    static boolean[] transpositionOccupied = new boolean[length];
     static int historyStored = 0;
     //transposition table
+    static boolean[] transpositionOccupied = new boolean[length];
     static long[] zobristStorage = new long[length];
-    static int[] evals = new int[length]; //in decipawns
-    static int[][] otherInfo = new int[length][3]; //best move, depth searched, bound
+    static short[] evals = new short[length]; //in decipawns
+    static int[] bestMoves = new int[length];
+    static byte[] depthsSearched = new byte[length];
+    static byte[] bounds = new byte[length];
     //metrics
     static byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
     kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
@@ -343,10 +345,10 @@ public class ChessProject {
     static void store(int evaluation, int bestMove, int depth, int bound) {
         int index = (int)(currentZobrist & (length - 1));
         zobristStorage[index] = currentZobrist;
-        evals[index] = evaluation;
-        otherInfo[index][0] = bestMove;
-        otherInfo[index][1] = depth;
-        otherInfo[index][2] = bound;
+        evals[index] = (short) evaluation;
+        bestMoves[index] = bestMove;
+        depthsSearched[index] = (byte) depth;
+        bounds[index] = (byte) bound;
         transpositionOccupied[index] = true;
     }
     static int getTranspositionIndex() {
@@ -1113,10 +1115,10 @@ public class ChessProject {
     static int calculateScore(int move) {
         int start = extract(move, 0);
         int end = extract(move, 1);
-        int piece = extract(move, 2);
+        int piece = mailbox[start-1];
         int t = getTranspositionIndex();
         if (t != -1) {
-            if (otherInfo[t][0] == move) return Integer.MAX_VALUE;
+            if (bestMoves[t] == move) return Integer.MAX_VALUE;
         }
         boolean pieceColor = color(piece);
         int modifier = (pieceColor) ? 1 : -1;
@@ -1410,19 +1412,19 @@ public class ChessProject {
         int bound = 0;
         int t = getTranspositionIndex();
         if (t != -1) {
-            if (otherInfo[t][1] >= depth) {
-                if (otherInfo[t][2] == 0) return (((long)evals[t]) << 32) | (otherInfo[t][0] & rightBitsOnly);
-                if (otherInfo[t][2] == -1) {
-                    if (evals[t] >= beta) return (((long)evals[t]) << 32) | (otherInfo[t][0] & rightBitsOnly);
+            if (depthsSearched[t] >= depth) {
+                if (bounds[t] == 0) return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
+                if (bounds[t] == -1) {
+                    if (evals[t] >= beta) return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
                     alpha = Math.max(alpha, evals[t]);
                 }
-                if (otherInfo[t][2] == 1) {
-                    if (evals[t] <= alpha) return (((long)evals[t]) << 32) | (otherInfo[t][0] & rightBitsOnly);
+                if (bounds[t] == 1) {
+                    if (evals[t] <= alpha) return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
                     beta = Math.min(beta, evals[t]);
                 }
                 if (alpha >= beta) {
-                    if (!isTacticalMove(otherInfo[t][0])) storeQuietMove(otherInfo[t][0], depth);
-                    return (((long)evals[t]) << 32) | (otherInfo[t][0] & rightBitsOnly);
+                    if (!isTacticalMove(bestMoves[t])) storeQuietMove(bestMoves[t], depth);
+                    return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
                 }
             }
         }
