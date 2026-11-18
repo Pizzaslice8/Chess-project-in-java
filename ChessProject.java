@@ -1,7 +1,6 @@
 import java.util.Scanner;
 import java.util.Arrays;
 import java.util.Random;
-import java.util.Objects;
 import java.lang.Math;
 
 public class ChessProject {
@@ -17,7 +16,51 @@ public class ChessProject {
     static final long baseLeftBit = Long.lowestOneBit(leftBitsOnly);
     static final int length = 0x800000; //around 8 million
     static long[][] zobrist = new long[64][13]; //13th slot is for if the square is available for en passant
-    //piece-to-square activity for knights
+    //moves
+    static int[][] movesStorage = new int[100][218];
+    static int[][] movesStorageQ = new int[100][218];
+    static int[] movesSorted = new int[218]; //most number of legal moves in a position is 218
+    static int[] tacticalMoves = new int[218];
+    static long[] movesWithScores = new long[218];
+    static long[] moveBoards = new long[64];
+    static long[] absolutePinRestrictions = new long[64];
+    static boolean[] whitePawnFiles = new boolean[8];
+    static boolean[] blackPawnFiles = new boolean[8];
+    //bitboards
+    static long[][] bishopAttacks = new long[64][];
+    static long[][] rookAttacks = new long[64][];
+    //position data
+    static int[] position = new int[7];
+    static long currentZobrist;
+    static long[] pieceBoard = new long[12];
+    static byte[] mailbox = new byte[64];
+    static int maxDepth;
+    //undo stack
+    static long[][] undoStackPieces = new long[100][12];
+    static byte[][] undoStackMailboxes = new byte[100][64];
+    static int[][] undoStackData = new int[100][7];
+    static boolean[] undoStackTactical = new boolean[100];
+    static boolean[] undoStackPawnStructureChanged = new boolean[100];
+    static long[] undoStackZobrist = new long[100];
+    static int undoDeep = 0;
+    //move ordering heuristics
+    static int slot = 0;
+    static boolean[] killerMoves = new boolean[4096];
+    static int[] history = new int[4096];
+    static int historyStored = 0;
+    //transposition table
+    static boolean[] transpositionOccupied = new boolean[length];
+    static long[] zobristStorage = new long[length];
+    static int[] dataStorage = new int[length];
+    //metrics
+    static byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
+    kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
+    //misc.
+    static long[] expandTemplate = new long[6];
+    static final int[] bishopDx = {1, 1, -1, -1};
+    static final int[] bishopDy = {-1, 1, 1, -1};
+    static final int[] rookDx = {1, 0, -1, 0};
+    static final int[] rookDy = {0, 1, 0, -1};
     static final byte[] knightBonus = {
         -12, -10, -8,  -8, -8, -8, -10, -12,
         -10, -10, -8,  -5, -5, -8, -10, -10,
@@ -26,7 +69,7 @@ public class ChessProject {
         0,    2,   8,  10, 10, 10,  2,   0,
         -5,   0,   5,   8,  8,  5,  0,  -5,
         -8,  -8,  -5,  -5, -5, -5, -8,  -8,
-        -12, -5,  -5,  -5, -5, -5, -5,  -12
+        -12, -5,  -5,  -5, -5, -5, -5,  -12 
     };
     static final float[] distanceToCenter = {
         4.94975f, 4.30116f, 3.80789f, 3.53553f, 3.53553f, 3.80789f, 4.30116f, 4.94975f, 
@@ -38,10 +81,27 @@ public class ChessProject {
         4.30116f, 3.53553f, 2.91548f, 2.54951f, 2.54951f, 2.91548f, 3.53553f, 4.30116f, 
         4.94975f, 4.30116f, 3.80789f, 3.53553f, 3.53553f, 3.80789f, 4.30116f, 4.94975f
     };
-    static final int[] bishopDx = {1, 1, -1, -1};
-    static final int[] bishopDy = {-1, 1, 1, -1};
-    static final int[] rookDx = {1, 0, -1, 0};
-    static final int[] rookDy = {0, 1, 0, -1};
+    static final long[] rankref = {
+        0xffL,
+        0xff00L,
+        0xff0000L,
+        0xff000000L,
+        0xff00000000L,
+        0xff0000000000L,
+        0xff000000000000L,
+        0xff00000000000000L
+    };
+    static final long[] fileref = {
+        0x1010101010100L,
+        0x2020202020200L,
+        0x4040404040400L,
+        0x8080808080800L,
+        0x10101010101000L,
+        0x20202020202000L,
+        0x40404040404000L,
+        0x80808080808000L
+    };
+    //non-magic bitboards
     static final long[] whitePawnVision = {
         0x200L, 0x500L, 0xa00L, 0x1400L, 0x2800L, 0x5000L, 0xa000L, 0x4000L, 0x20000L, 0x50000L, 0xa0000L, 0x140000L,
         0x280000L, 0x500000L, 0xa00000L, 0x400000L, 0x2000000L, 0x5000000L, 0xa000000L, 0x14000000L, 0x28000000L,
@@ -114,60 +174,13 @@ public class ChessProject {
         0x807f808080808080L, 0xfe01010101010101L, 0xfd02020202020202L, 0xfb04040404040404L, 0xf708080808080808L,
         0xef10101010101010L, 0xdf20202020202020L, 0xbf40404040404040L, 0x7f80808080808080L
     };
-    static int[] moves = new int[512];
-    static long[] moveBoards = new long[64];
-    static long[] absolutePinRestrictions = new long[64];
-    static boolean[] whitePawnFiles = new boolean[8];
-    static boolean[] blackPawnFiles = new boolean[8];
-    //bitboards
-    static long[][] bishopAttacks = new long[64][];
-    static long[][] rookAttacks = new long[64][];
-    static int[] position = new int[7];
-    static long currentZobrist;
-    static long[] pieceBoard = new long[12];
-    static byte[] mailbox = new byte[64];
-    static int maxDepth;
-    static long[][] undoStackPieces = new long[4096][12];
-    static byte[][] undoStackMailboxes = new byte[4096][64];
-    static int[][] undoStackData = new int[4096][7];
-    static boolean[] undoStackTactical = new boolean[4096];
-    static boolean[] undoStackPawnStructureChanged = new boolean[4096];
-    static long[] undoStackZobrist = new long[4096];
-    static int slot = 0;
-    static int undoDeep = 0;
-    static boolean[] killerMoves = new boolean[4096];
-    static int[] history = new int[4096];
-    static int historyStored = 0;
-    //transposition table
-    static boolean[] transpositionOccupied = new boolean[length];
-    static long[] zobristStorage = new long[length];
-    static short[] evals = new short[length]; //in decipawns
-    static int[] bestMoves = new int[length];
-    static byte[] depthsSearched = new byte[length];
-    static byte[] bounds = new byte[length];
-    //metrics
-    static byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
-    kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
-    static final long[] rankref = {
-        0xffL,
-        0xff00L,
-        0xff0000L,
-        0xff000000L,
-        0xff00000000L,
-        0xff0000000000L,
-        0xff000000000000L,
-        0xff00000000000000L
-    };
-    static final long[] fileref = {
-        0x1010101010100L,
-        0x2020202020200L,
-        0x4040404040400L,
-        0x8080808080800L,
-        0x10101010101000L,
-        0x20202020202000L,
-        0x40404040404000L,
-        0x80808080808000L
-    };
+    static int findMaxIndex(long[] a) {
+        int maxIndex = 0;
+        for (int i = 1; i < a.length; i++) {
+            if (a[i] > a[maxIndex]) maxIndex = i;
+        }
+        return maxIndex;
+    }
     static int closestEdge(int square) {
         //1 = 1st rank, 2 = h-file, 3 = 9th rank, 4 = a-file
         int rank = square / 8;
@@ -245,7 +258,49 @@ public class ChessProject {
         return output;
     }
     static int occupancyIndex(long occupancy, long mask) {
-        return (int) Long.compress(occupancy, mask);
+        // because Long.compress and Long.expand don't exist on some mobile java apps
+        occupancy &= mask;
+        long mk = ~mask << 1;
+
+        for (int i = 0; i < 6; i++) {
+            long mp = mk ^ (mk << 1);
+            mp ^= mp << 2;
+            mp ^= mp << 4;
+            mp ^= mp << 8;
+            mp ^= mp << 16;
+            mp ^= mp << 32;
+            long mv = mp & mask;
+            mask = (mask ^ mv) | (mv >>> (1 << i));
+            long t = occupancy & mv;
+            occupancy = (occupancy ^ t) | (t >>> (1 << i));
+            mk &= ~mp;
+        }
+        return (int) occupancy;
+    }
+    static long expand(long occupancy, long mask) {
+        long m0 = mask;
+        long mk = ~mask << 1;
+        Arrays.fill(expandTemplate, 0);
+
+        for (int i = 0; i < 6; i++) {
+            long mp = mk ^ (mk << 1);
+            mp ^= mp << 2;
+            mp ^= mp << 4;
+            mp ^= mp << 8;
+            mp ^= mp << 16;
+            mp ^= mp << 32;
+            long mv = mp & mask;
+            expandTemplate[i] = mv;
+            mask = (mask ^ mv) | (mv >>> (1 << i));
+            mk &= ~mp;
+        }
+
+        for (int i = 5; i >= 0; i--) {
+            long mv = expandTemplate[i];
+            long t = occupancy << (1 << i);
+            occupancy = (occupancy & ~mv) | (t & mv);
+        }
+        return occupancy & m0;
     }
     //attack maps
     static long getBitboard(int square, long allPieces, int piece) {
@@ -336,8 +391,8 @@ public class ChessProject {
         return (piece % 2) == 1;
     }
     static void storeQuietMove(int move, int depth) {
-        int moveStart = extract(move, 0) - 1;
-        int moveEnd = extract(move, 1) - 1;
+        int moveStart = extractStart(move) - 1;
+        int moveEnd = extractEnd(move) - 1;
         int requiredIndex = (moveStart << 6) | moveEnd;
         killerMoves[requiredIndex] = true;
         history[requiredIndex] = Math.min(history[requiredIndex], 500); //store history
@@ -345,10 +400,7 @@ public class ChessProject {
     static void store(int evaluation, int bestMove, int depth, int bound) {
         int index = (int)(currentZobrist & (length - 1));
         zobristStorage[index] = currentZobrist;
-        evals[index] = (short) evaluation;
-        bestMoves[index] = bestMove;
-        depthsSearched[index] = (byte) depth;
-        bounds[index] = (byte) bound;
+        dataStorage[index] = compressTranspositionData(evaluation, bestMove, depth, bound);
         transpositionOccupied[index] = true;
     }
     static int getTranspositionIndex() {
@@ -356,16 +408,33 @@ public class ChessProject {
         if (transpositionOccupied[index] && currentZobrist == zobristStorage[index]) return index;
         return -1;
     }
-    static int compress(int start, int end, int piece) {
-        return (start << 24) | (end << 16) | piece;
+    static int compress(int start, int end) {
+        //only takes up 12 bits
+        return ((start - 1) << 6) | (end - 1);
     }
-    static int extract(int compressed, int what) {
-        //0 = start, 1 = end, 2 = piece
+    static int extractStart(int compressed) {
+        return (compressed >> 6) + 1;
+    }
+    static int extractEnd(int compressed) {
+        return (compressed & 0x3f) + 1;
+    }
+    static int compressTranspositionData(int eval, int move, int depth, int bound) {
+        /*
+        Eval: 14 bits
+        Move: 12 bits
+        Depth: 4 bits (max 15)
+        Bound: 2 bits
+        Total: 32 bits
+        */
+        return (bound + 1) | ((depth & 15) << 2) | (move << 6) | ((eval + 8192) << 18);
+    }
+    static int extractTranspositionData(int compressedData, int what) {
         switch (what) {
-            case 0: return (compressed & 0x7f000000) >> 24;
-            case 1: return (compressed & 0xff0000) >> 16;
-            case 2: return compressed & 0xffff;
-            default: return 0;
+            case 0: return (compressedData >>> 18) - 8192;
+            case 1: return (compressedData >>> 6) & 4095;
+            case 2: return (compressedData >>> 2) & 15;
+            case 3: return (compressedData & 3) - 1;
+            default: throw new IllegalArgumentException("Unknown transposition-data field: " + what);
         }
     }
     static int bishopPairBonus(boolean tactical) {
@@ -560,13 +629,6 @@ public class ChessProject {
             squares &= (squares - 1);
         }
     }
-    static void updateKingPawnEvaluation() {
-        updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
-    }
-    static void updatePawnStructureEvaluation() {
-        updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[6] | pieceBoard[7]
-        | pieceBoard[8] | pieceBoard[9] | pieceBoard[10] | pieceBoard[11]);
-    }
     static long occupiedSquares(boolean color) {
         return (color ? (
             pieceBoard[0] | pieceBoard[2] | pieceBoard[4] | pieceBoard[6] | pieceBoard[8] | pieceBoard[10]
@@ -587,9 +649,9 @@ public class ChessProject {
         long heavyPieces = (checkmateMode > 0) ? (pieceBoard[2] | pieceBoard[4]) : (pieceBoard[3] | pieceBoard[5]);
         long controlledBits = 0L;
         long heavyCopy = heavyPieces;
+        long occupied = occupiedSquares(true) | occupiedSquares(false);
         while (heavyCopy != 0) {
-            controlledBits |= getBitboard(Long.numberOfTrailingZeros(heavyCopy),
-            occupiedSquares(true) | occupiedSquares(false), 5);
+            controlledBits |= getBitboard(Long.numberOfTrailingZeros(heavyCopy), occupied, 5);
             heavyCopy &= (heavyCopy-1);
         }
         int currentX, currentY, currentSquare, sizeX = 1, sizeY = 1;
@@ -649,17 +711,16 @@ public class ChessProject {
         System.out.println(currentZobrist);
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
-
-        int[] getMoves = sortMoves();
-        for (int i = 0; i < getMoves.length; i++) {
-            int start = extract(getMoves[i], 0);
-            int end = extract(getMoves[i], 1);
+        int quantity = sortMoves();
+        for (int i = 0; i < quantity; i++) {
+            int start = extractStart(movesSorted[i]);
+            int end = extractEnd(movesSorted[i]);
             int x1 = getX(start);
             int y1 = getY(start);
             int x2 = getX(end);
             int y2 = getY(end);
             System.out.printf("%c%d%c%d", ((char)(x1 + 96)), y1, ((char)(x2 + 96)), y2);
-            if (i < getMoves.length-1) System.out.print(", ");
+            System.out.print(", ");
         }
         System.out.println("");
         System.out.println("Checkmate algorithm activated? " + ((simpleCheckmate() == 0) ? "no" : "yes"));
@@ -756,72 +817,48 @@ public class ChessProject {
                 if (position[1] == 1 && ((pieceBoard[4] & (1L << 7)) != 0) && isEmpty(6) && isEmpty(7)) {
                     boolean allowed = true;
                     pieceBoard[0] = (1L << 5);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[0] = (1L << 6);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[0] = (1L << 4);
-                    if (allowed) {
-                        output |= (1L << 6);
-                    }    
+                    if (allowed) output |= (1L << 6);
                 }
                 if (position[2] == 1 && ((pieceBoard[4] & 1L) != 0) && isEmpty(4) && isEmpty(3) && isEmpty(2)) {   
                     boolean allowed = true; 
                     pieceBoard[0] = (1L << 3);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[0] = (1L << 2);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[0] = (1L << 4);
-                    if (allowed) {
-                        output |= (1L << 2);
-                    }
+                    if (allowed) output |= (1L << 2);
                 }
             }
             if (square == 61) {
                 if (position[3] == 1 && ((pieceBoard[5] & (1L << 63)) != 0) && isEmpty(62) && isEmpty(63)) {
                     boolean allowed = true;
                     pieceBoard[1] = (1L << 61);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[1] = (1L << 62);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[1] = (1L << 60);
-                    if (allowed) {
-                        output |= (1L << 62);
-                    }    
+                    if (allowed) output |= (1L << 62);
                 }
                 if (position[4] == 1 && ((pieceBoard[5] & (1L << 56)) != 0) && isEmpty(60) && isEmpty(59) && isEmpty(58)) {   
                     boolean allowed = true; 
                     pieceBoard[1] = (1L << 59);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[1] = (1L << 58);
-                    if (inCheck()) {
-                        allowed = false;
-                    }
+                    if (inCheck()) allowed = false;
                     pieceBoard[1] = (1L << 60);
-                    if (allowed) {
-                        output |= (1L << 58);
-                    }
+                    if (allowed) output |= (1L << 58);
                 }
             }
         }
         return output;
     }
     static void makeMove(int move) {
-        int start = extract(move, 0);
-        int end = extract(move, 1);
+        int start = extractStart(move);
+        int end = extractEnd(move);
         int piece = mailbox[start-1];
         int captured = mailbox[end-1];
         int epSquare = position[5];
@@ -834,7 +871,6 @@ public class ChessProject {
         System.arraycopy(pieceBoard, 0, undoStackPieces[undoDeep], 0, 12);
         System.arraycopy(mailbox, 0, undoStackMailboxes[undoDeep], 0, 64);
         System.arraycopy(position, 0, undoStackData[undoDeep], 0, 7);
-        undoDeep++;
         if (position[5] != 0 && piece != 11 && piece != 12) {
             currentZobrist ^= zobrist[position[5]-1][12];
             position[5] = 0;
@@ -1033,25 +1069,27 @@ public class ChessProject {
             update(62);
             update(64);
         }
-        if (pawnStructureChanged) updatePawnStructureEvaluation();
-        else if (tacticalMove) updateKingPawnEvaluation();
+        if (pawnStructureChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[6] | pieceBoard[7]
+        | pieceBoard[8] | pieceBoard[9] | pieceBoard[10] | pieceBoard[11]);
+        else if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
+        undoDeep++;
     }
     static void restore() {
         undoDeep--;
         boolean tacticalMove = undoStackTactical[undoDeep];
         boolean pawnStructureChanged = undoStackPawnStructureChanged[undoDeep];
-        long[] bitboardCopy = undoStackPieces[undoDeep];
-        long changedSquares = 0L;
-        for (int i = 0; i < 12; i++) changedSquares |= (bitboardCopy[i] ^ pieceBoard[i]);
-        System.arraycopy(bitboardCopy, 0, pieceBoard, 0, 12);
+        long changedSquares = 0;
+        for (int p = 0; p < 12; p++) changedSquares |= pieceBoard[p] ^ undoStackPieces[undoDeep][p];
+        System.arraycopy(undoStackPieces[undoDeep], 0, pieceBoard, 0, 12);
         System.arraycopy(undoStackMailboxes[undoDeep], 0, mailbox, 0, 64);
         System.arraycopy(undoStackData[undoDeep], 0, position, 0, 7);
-        currentZobrist = undoStackZobrist[undoDeep];
         updateEvaluation(changedSquares);
-        if (pawnStructureChanged) updatePawnStructureEvaluation();
-        else if (tacticalMove) updateKingPawnEvaluation();
+        currentZobrist = undoStackZobrist[undoDeep];
+        if (pawnStructureChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[6] | pieceBoard[7]
+        | pieceBoard[8] | pieceBoard[9] | pieceBoard[10] | pieceBoard[11]);
+        else if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
     }
-    static long legalMoves(int square, long checkingPieces, long opposingAttackMap, long[] absolutePinRestrictions) {
+    static long legalMoves(int square, long checkingPieces, long opposingAttackMap) {
         int piece = mailbox[square-1];
         int checkStatus = Long.bitCount(checkingPieces);
         long occupied = occupiedSquares(true) | occupiedSquares(false);
@@ -1113,12 +1151,12 @@ public class ChessProject {
         return output;
     }
     static int calculateScore(int move) {
-        int start = extract(move, 0);
-        int end = extract(move, 1);
+        int start = extractStart(move);
+        int end = extractEnd(move);
         int piece = mailbox[start-1];
         int t = getTranspositionIndex();
         if (t != -1) {
-            if (bestMoves[t] == move) return Integer.MAX_VALUE;
+            if (extractTranspositionData(dataStorage[t], 1) == move) return Integer.MAX_VALUE;
         }
         boolean pieceColor = color(piece);
         int modifier = (pieceColor) ? 1 : -1;
@@ -1146,7 +1184,7 @@ public class ChessProject {
             //max of difference is 360, for "pawn takes queen promotes to queen"
             return Integer.MAX_VALUE - 361 + difference;
         }
-        int neededIndex = ((start - 1) >> 64) | (end - 1);
+        int neededIndex = ((start - 1) << 6) | (end - 1);
         //killer moves heuristic
         if (killerMoves[neededIndex]) return Integer.MAX_VALUE - 362;
         //history heuristic
@@ -1177,7 +1215,8 @@ public class ChessProject {
         }
         return (int) Math.round(cumulative * pieceModifier);
     }
-    static int[] generateTacticalMoves() {
+    static int generateTacticalMoves() {
+        Arrays.fill(tacticalMoves, 0);
         long squares = occupiedSquares(position[0] == 1);
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
         occupiedSquares(true) | occupiedSquares(false));
@@ -1205,17 +1244,18 @@ public class ChessProject {
         for (int square = 0; square < 64; square++) {
             if ((squares & (1L << square)) == 0) moveBoards[square] = 0L;
             else {
-                long allMoves = legalMoves(square+1, check, opposingAttackMap, absolutePinRestrictions);
+                long allMoves = legalMoves(square+1, check, opposingAttackMap);
                 while (allMoves != 0) {
-                    int move = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1, mailbox[square]);
-                    if (isTacticalMove(move)) moves[quantity++] = move;
+                    int move = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
+                    if (isTacticalMove(move)) tacticalMoves[quantity++] = move;
                     allMoves &= (allMoves - 1);
                 }
             }
         }
-        return Arrays.copyOf(moves, quantity);
+        return quantity;
     }
-    static int[] sortMoves() {
+    static int sortMoves() {
+        Arrays.fill(movesSorted, 0);
         long squares = occupiedSquares(position[0] == 1);
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
         occupiedSquares(true) | occupiedSquares(false));
@@ -1240,29 +1280,28 @@ public class ChessProject {
             }
         }
         int quantity = 0;
-        for (int square = 0; square < 64; square++) {
-            if ((squares & (1L << square)) == 0) moveBoards[square] = 0L;
-            else {
-                long allMoves = legalMoves(square+1, check, opposingAttackMap, absolutePinRestrictions);
-                while (allMoves != 0) {
-                    moves[quantity++] = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1, mailbox[square]);
-                    allMoves &= (allMoves - 1);
-                }
+        Arrays.fill(moveBoards, 0L);
+        while (squares != 0) {
+            int square = Long.numberOfTrailingZeros(squares);
+            long allMoves = legalMoves(square+1, check, opposingAttackMap);
+            while (allMoves != 0) {
+                movesSorted[quantity++] = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
+                allMoves &= (allMoves - 1);
             }
+            squares &= (squares - 1);
         }
-        long[] scoredMoves = new long[quantity];
         for (int j = 0; j < quantity; j++) {
-            int score = calculateScore(moves[j]);
-            scoredMoves[j] = ((long) (~score) << 32) | (moves[j] & 0xffffffffL);
+            int score = calculateScore(movesSorted[j]);
+            movesWithScores[j] = ((long) (~score) << 32) | (movesSorted[j] & 0xffffffffL);
         }
-        Arrays.sort(scoredMoves);
-        for (int j = 0; j < quantity; j++) moves[j] = (int) scoredMoves[j];
-        return Arrays.copyOf(moves, quantity);
+        Arrays.sort(movesWithScores, 0, quantity);
+        for (int j = 0; j < quantity; j++) movesSorted[j] = (int) movesWithScores[j];
+        return quantity;
     }
     static boolean isTacticalMove(int move) {
-        int start = extract(move, 0);
-        int end = extract(move, 1);
-        int piece = extract(move, 2);
+        int start = extractStart(move);
+        int end = extractEnd(move);
+        int piece = mailbox[start-1];
         return !isEmpty(end) || ((piece == 11 || piece == 12) && end == position[5])
         || (piece == 11 && end >= 57) || (piece == 12 && end <= 8);
     }
@@ -1355,13 +1394,12 @@ public class ChessProject {
         if (blackRooks == 1) return -3;
         return 0;
     }
-    static int evalQ(int alpha, int beta) {
+    static int evalQ(int alpha, int beta, int depth) {
         int checkmateMode = simpleCheckmate();
         if (checkmateMode != 0) {
-            nodes = Integer.MAX_VALUE / 2;
             return (checkmateMode > 0)
-                ? ((Integer.MAX_VALUE / 2) - sizeOfKingBox(checkmateMode))
-                : ((Integer.MIN_VALUE / 2) + sizeOfKingBox(checkmateMode));
+                ? (7000 - sizeOfKingBox(checkmateMode))
+                : (-7000 + sizeOfKingBox(checkmateMode));
         } //the smaller the box, the better
         nodes++;
         boolean maximizing = position[0] == 1;
@@ -1378,59 +1416,86 @@ public class ChessProject {
             }
         }
         //if checked, consider all legal moves, if not, only consider tactical moves
-        int[] moves = (inCheck()) ? sortMoves() : generateTacticalMoves();
-        for (int i = 0; i < moves.length; i++) {
-            makeMove(moves[i]);
-            int potential;
-            potential = evalQ(alpha, beta);
-            restore();
-            if (maximizing) {
-                best = Math.max(best, potential);
-                alpha = Math.max(alpha, best);
-            } else {
-                best = Math.min(best, potential);
-                beta = Math.min(beta, best);
+        Arrays.fill(movesStorageQ[depth], 0);
+        int quantity;
+        if (inCheck()) {
+            quantity = sortMoves();
+            for (int i = 0; i < quantity; i++) {
+                makeMove(movesSorted[i]);
+                System.arraycopy(movesSorted, 0, movesStorageQ[depth], 0, quantity);
+                int potential;
+                potential = evalQ(alpha, beta, depth + 1);
+                restore();
+                System.arraycopy(movesStorageQ[depth], 0, movesSorted, 0, quantity);
+                if (maximizing) {
+                    best = Math.max(best, potential);
+                    alpha = Math.max(alpha, best);
+                } else {
+                    best = Math.min(best, potential);
+                    beta = Math.min(beta, best);
+                }
+                if (alpha >= beta) break;
             }
-            if (alpha >= beta) break;
+        } else {
+            quantity = generateTacticalMoves();
+            for (int i = 0; i < quantity; i++) {
+                makeMove(tacticalMoves[i]);
+                System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
+                int potential;
+                potential = evalQ(alpha, beta, depth + 1);
+                restore();
+                System.arraycopy(movesStorageQ[depth], 0, tacticalMoves, 0, quantity);
+                if (maximizing) {
+                    best = Math.max(best, potential);
+                    alpha = Math.max(alpha, best);
+                } else {
+                    best = Math.min(best, potential);
+                    beta = Math.min(beta, best);
+                }
+                if (alpha >= beta) break;
+            }
         }
         return best;
     }
     static long evalDepth(int depth, int alpha, int beta, long previousResult) {
         if (previousResult != baseLeftBit) {
             int evalOnly = (int)(previousResult >> 32);
-            int lower = (Integer.MIN_VALUE + 50 < evalOnly) ? evalOnly - 50 : Integer.MIN_VALUE;
-            //in case previousResult[0] is less than 50 away from Integer.MIN_VALUE
-            int higher = (Integer.MAX_VALUE - 50 > evalOnly) ? evalOnly + 50 : Integer.MAX_VALUE;
-            //in case previousResult[0] is less than 50 away from Integer.MAX_VALUE
+            int lower = (evalOnly > -8192) ? evalOnly - 50 : -8192;
+            //in case previousResult[0] is less than 50 away from -8192
+            int higher = (evalOnly < 8191) ? evalOnly + 50 : 8191;
+            //in case previousResult[0] is less than 50 away from 8191
             long shallowSearch = evalDepth(depth, lower, higher, baseLeftBit);
             if ((shallowSearch >> 32) < higher && (shallowSearch >> 32) > lower) return shallowSearch;
         }
-        nodes++;
         if (depth == maxDepth) Arrays.fill(killerMoves, false);
         int alphaOriginal = alpha;
         int betaOriginal = beta;
         int bound = 0;
         int t = getTranspositionIndex();
         if (t != -1) {
-            if (depthsSearched[t] >= depth) {
-                if (bounds[t] == 0) return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
-                if (bounds[t] == -1) {
-                    if (evals[t] >= beta) return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
-                    alpha = Math.max(alpha, evals[t]);
+            if (extractTranspositionData(dataStorage[t], 2) >= depth) {
+                int eval = extractTranspositionData(dataStorage[t], 0);
+                int move = extractTranspositionData(dataStorage[t], 1);
+                int boundFound = extractTranspositionData(dataStorage[t], 3);
+                if (boundFound == 0) return (((long)eval) << 32) | (move & rightBitsOnly);
+                if (boundFound == -1) {
+                    if (eval >= beta) return (((long)eval) << 32) | (move & rightBitsOnly);
+                    alpha = Math.max(alpha, eval);
                 }
-                if (bounds[t] == 1) {
-                    if (evals[t] <= alpha) return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
-                    beta = Math.min(beta, evals[t]);
+                if (boundFound == 1) {
+                    if (eval <= alpha) return (((long)eval) << 32) | (move & rightBitsOnly);
+                    beta = Math.min(beta, eval);
                 }
                 if (alpha >= beta) {
-                    if (!isTacticalMove(bestMoves[t])) storeQuietMove(bestMoves[t], depth);
-                    return (((long)evals[t]) << 32) | (bestMoves[t] & rightBitsOnly);
+                    if (!isTacticalMove(move)) storeQuietMove(move, depth);
+                    return (((long)eval) << 32) | (move & rightBitsOnly);
                 }
             }
         }
+        nodes++;
         boolean maximizing = position[0] == 1;
         //null move pruning
-        boolean hasNullMoveBound = maximizing ? beta < Integer.MAX_VALUE : alpha > Integer.MIN_VALUE;
+        boolean hasNullMoveBound = maximizing ? beta < 8191 : alpha > -8192;
         if (depth > 2 && hasNullMoveBound && !pawnEndgame()
         && !inCheck() && depth < maxDepth && activePieces() > 2) { //don't want to do this at the root node
             long evalPass;
@@ -1453,17 +1518,19 @@ public class ChessProject {
                 return ((long)(maximizing ? beta : alpha)) << 32;
             }
         }
-        if (depth == 0) return ((long)evalQ(alpha, beta)) << 32;
+        if (depth == 0) return ((long)evalQ(alpha, beta, 0)) << 32;
         //aspiration window
-        int[] moves = sortMoves();
-        if (moves.length == 0) {
+        int quantity = sortMoves();
+        if (quantity == 0) {
             if (inCheck()) return (position[0] == 1) ? Long.MIN_VALUE : leftBitsOnly;
             return 0;
         }
-        int evaluation = maximizing ? Integer.MIN_VALUE : Integer.MAX_VALUE;
+        Arrays.fill(movesStorage[depth - 1], 0);
+        int evaluation = maximizing ? -8192 : 8191;
         int bestMove = 0;
-        for (int i = 0; i < moves.length; i++) {
-            makeMove(moves[i]);
+        for (int i = 0; i < quantity; i++) {
+            makeMove(movesSorted[i]);
+            System.arraycopy(movesSorted, 0, movesStorage[depth - 1], 0, quantity);
             int potential;
             //principal variation search
             //search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
@@ -1479,22 +1546,23 @@ public class ChessProject {
                 }
             }
             restore();
+            System.arraycopy(movesStorage[depth - 1], 0, movesSorted, 0, quantity);
             if (maximizing) {
                 if (potential > evaluation) {
                     evaluation = potential;
-                    bestMove = moves[i];
+                    bestMove = movesSorted[i];
                 }
                 alpha = Math.max(alpha, evaluation);
             } else {
                 if (potential < evaluation) {
                     evaluation = potential;
-                    bestMove = moves[i];
+                    bestMove = movesSorted[i];
                 }
                 beta = Math.min(beta, evaluation);
             }
             if (alpha >= beta) {
-                if (!isTacticalMove(moves[i]))
-                storeQuietMove(moves[i], depth);
+                if (!isTacticalMove(movesSorted[i]))
+                storeQuietMove(movesSorted[i], depth);
                 break;
             }
         }
@@ -1508,8 +1576,8 @@ public class ChessProject {
         for (int i = 0; i < 64; i++) {
             long[] rookAddition = new long[1 << Long.bitCount(rookVision[i])];
             long[] bishopAddition = new long[1 << Long.bitCount(bishopVision[i])];
-            for (int index = 0; index < rookAddition.length; index++) rookAddition[index] = fillWithRook(i, Long.expand(index, rookVision[i]));
-            for (int index = 0; index < bishopAddition.length; index++) bishopAddition[index] = fillWithBishop(i, Long.expand(index, bishopVision[i]));
+            for (int index = 0; index < rookAddition.length; index++) rookAddition[index] = fillWithRook(i, expand(index, rookVision[i]));
+            for (int index = 0; index < bishopAddition.length; index++) bishopAddition[index] = fillWithBishop(i, expand(index, bishopVision[i]));
             rookAttacks[i] = rookAddition;
             bishopAttacks[i] = bishopAddition;
             //zobrist
@@ -1529,7 +1597,6 @@ public class ChessProject {
         }
         Scanner scanner = new Scanner(System.in);
         System.out.println("done");
-        int[] setup = new int[72];
         System.out.print("FEN: ");
         char[] fen = new char[256];
 
@@ -1615,7 +1682,9 @@ public class ChessProject {
             displayStats();    
         }
         long pieceSquares = occupiedSquares(position[0] == 1);
-        if (!sufficientMaterial() || position[6] >= 100 || sortMoves().length == 0) return 6;
+        if (!sufficientMaterial() || position[6] >= 100) return 6;
+        int quantity = sortMoves();
+        if (quantity == 0) return 6;
         System.out.print("Depth: ");
         maxDepth = scanner.nextInt();
         long lastCompleted = baseLeftBit;
@@ -1625,12 +1694,12 @@ public class ChessProject {
                 System.out.println("Calculating...");
                 long start = System.nanoTime();
                 nodes = 0;
-                lastCompleted = evalDepth(j, Integer.MIN_VALUE, Integer.MAX_VALUE, lastCompleted);
+                lastCompleted = evalDepth(j, -8192, 8191, lastCompleted);
                 double timeTaken = (System.nanoTime() - start) / 1000000000.0;
                 int raw = (int)(lastCompleted >> 32);
                 double rawEval = raw;
                 double evaluation = rawEval / 10.0; // convert decipawns (1/10 pawn) to pawns
-                if (evaluation == 214748364.7 || evaluation == -214748364.8) {
+                if (evaluation == 819.1 || evaluation == -819.2) {
                     System.out.print("\u001b[33m");
                     System.out.printf("Evaluation: %f", evaluation);
                     System.out.print("\u001b[0m");
@@ -1638,8 +1707,8 @@ public class ChessProject {
                 }
                 else System.out.printf("Evaluation: %f\n", evaluation);
                 int bestMove = (int)(lastCompleted & 0xffffffffL);
-                int moveStart = extract(bestMove, 0);
-                int moveEnd = extract(bestMove, 1);
+                int moveStart = extractStart(bestMove);
+                int moveEnd = extractEnd(bestMove);
                 int x1 = getX(moveStart);
                 int y1 = getY(moveStart);
                 int x2 = getX(moveEnd);
