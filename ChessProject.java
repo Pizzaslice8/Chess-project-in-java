@@ -535,7 +535,7 @@ public class ChessProject {
         while (whitePawnsToConsider != 0) {
             int square = Long.numberOfTrailingZeros(whitePawnsToConsider) + 1;
             int file = getX(square);
-            if ((pieceBoard[10] & fileref[file]) == 0 && (pieceBoard[10] & fileref[file]) == 0) {
+            if ((pieceBoard[10] & fileref[file]) == 0 && (pieceBoard[10] & fileref[file-2]) == 0) {
                 if ((pieceBoard[9] & (1L << (square + 7))) == 0) subtotal -= 5;
                 else subtotal -= 2;
             }
@@ -544,7 +544,7 @@ public class ChessProject {
         while (blackPawnsToConsider != 0) {
             int square = Long.numberOfTrailingZeros(blackPawnsToConsider) + 1;
             int file = getX(square);
-            if ((pieceBoard[11] & fileref[file]) == 0 && (pieceBoard[11] & fileref[file]) == 0) {
+            if ((pieceBoard[11] & fileref[file]) == 0 && (pieceBoard[11] & fileref[file-2]) == 0) {
                 if ((pieceBoard[8] & (1L << (square - 9))) == 0) subtotal += 5;
                 else subtotal += 2;
             }
@@ -1713,7 +1713,7 @@ public class ChessProject {
         return best;
     }
     static long evalDepth(int depth, int alpha, int beta, long previousResult) {
-        if (previousResult != baseLeftBit) {
+        if (previousResult != baseLeftBit && depth == maxDepth) {
             int evalOnly = (int)(previousResult >> 32);
             int lower = (evalOnly > -8192) ? evalOnly - 50 : -8192;
             //in case previousResult[0] is less than 50 away from -8192
@@ -1924,7 +1924,7 @@ public class ChessProject {
                         position[6] = (int)(current - '0');
                         position[6] *= 10;
                         current = fen[++i];
-                        position[6] = (int)(current - '0');
+                        position[6] += (int)(current - '0');
                     }
                     break;
                 default: break;
