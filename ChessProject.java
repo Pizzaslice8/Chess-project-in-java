@@ -19,7 +19,7 @@ public class ChessProject {
     //moves
     static int[][] movesStorage = new int[100][218];
     static int[][] movesStorageQ = new int[100][218];
-    static int[] movesSorted = new int[218]; //most number of legal moves in a position is 218
+    static int[] legalMoveList = new int[218]; //most number of legal moves in a position is 218
     static int[] tacticalMoves = new int[218];
     static long[] movesWithScores = new long[218];
     static long[] moveBoards = new long[64];
@@ -34,6 +34,8 @@ public class ChessProject {
     static long currentZobrist;
     static long[] pieceBoard = new long[12];
     static byte[] mailbox = new byte[64];
+    static long whiteHoles = 0L, blackHoles = 0L;
+    static long controlledByWhitePawns = 0L, controlledByBlackPawns = 0L;
     static int maxDepth;
     //undo stack
     static long[][] undoStackPieces = new long[100][12];
@@ -41,6 +43,7 @@ public class ChessProject {
     static int[][] undoStackData = new int[100][7];
     static boolean[] undoStackTactical = new boolean[100];
     static boolean[] undoStackPawnStructureChanged = new boolean[100];
+    static boolean[] undoStackKingSafetyChanged = new boolean[100];
     static long[] undoStackZobrist = new long[100];
     static int undoDeep = 0;
     //move ordering heuristics
@@ -53,8 +56,8 @@ public class ChessProject {
     static long[] zobristStorage = new long[length];
     static int[] dataStorage = new int[length];
     //metrics
-    static byte[] pieceActivity = new byte[64], material = new byte[64], centralControl = new byte[64],
-    kingSafety = new byte[64], space = new byte[64], rooksSeventh = new byte[64], outposts = new byte[64];
+    static int[] pieceActivity = new int[64], material = new int[64], centralControl = new int[64],
+    kingSafety = new int[64], space = new int[64], rooksSeventh = new int[64], outposts = new int[64];
     //misc.
     static long[] expandTemplate = new long[6];
     static final int[] bishopDx = {1, 1, -1, -1};
@@ -71,6 +74,17 @@ public class ChessProject {
         -8,  -8,  -5,  -5, -5, -5, -8,  -8,
         -12, -5,  -5,  -5, -5, -5, -5,  -12 
     };
+    static final byte[] quadrant = {
+        3, 3, 3, 3, 4, 4, 4, 4,
+        3, 3, 3, 3, 4, 4, 4, 4,
+        3, 3, 3, 3, 4, 4, 4, 4,
+        3, 3, 3, 3, 4, 4, 4, 4,
+        2, 2, 2, 2, 1, 1, 1, 1,
+        2, 2, 2, 2, 1, 1, 1, 1,
+        2, 2, 2, 2, 1, 1, 1, 1,
+        2, 2, 2, 2, 1, 1, 1, 1
+    };
+    static final long[] quadrantref = {0xf0f0f0f0L, 0xf0f0f0fL, 0xf0f0f0f00000000L, 0xf0f0f0f000000000L};
     static final float[] distanceToCenter = {
         4.94975f, 4.30116f, 3.80789f, 3.53553f, 3.53553f, 3.80789f, 4.30116f, 4.94975f, 
         4.30116f, 3.53553f, 2.91548f, 2.54951f, 2.54951f, 2.91548f, 3.53553f, 4.30116f, 
@@ -174,13 +188,6 @@ public class ChessProject {
         0x807f808080808080L, 0xfe01010101010101L, 0xfd02020202020202L, 0xfb04040404040404L, 0xf708080808080808L,
         0xef10101010101010L, 0xdf20202020202020L, 0xbf40404040404040L, 0x7f80808080808080L
     };
-    static int findMaxIndex(long[] a) {
-        int maxIndex = 0;
-        for (int i = 1; i < a.length; i++) {
-            if (a[i] > a[maxIndex]) maxIndex = i;
-        }
-        return maxIndex;
-    }
     static int closestEdge(int square) {
         //1 = 1st rank, 2 = h-file, 3 = 9th rank, 4 = a-file
         int rank = square / 8;
@@ -448,8 +455,8 @@ public class ChessProject {
         int outputTactical = 0;
         int outputNontactical = 0;
         int materialDifferential = 0;
-        double activePiecesModifier = Math.min(activePieces(), 4) / 4.0;
-        double endgamePercent = percentEndgame();
+        float activePiecesModifier = Math.min(activePieces(), 4) / 4.0f;
+        float endgamePercent = percentEndgame();
         for (int i = 0; i < 64; i++) {
             outputTactical += pieceActivity[i] + centralControl[i]
             + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
@@ -460,7 +467,7 @@ public class ChessProject {
         int tacticalOutput = outputTactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(true);
         int nontacticalOutput = outputNontactical + ((position[0] == 1) ? 1 : -1) + bishopPairBonus(false);
         //material matters more in the endgame
-        double materialModifier = 1 + endgamePercent;
+        float materialModifier = 1 + endgamePercent;
         if ((pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]) == 0) {
             if ((pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0) {
                 //pawn endgame, any material advantage is practically decisive
@@ -469,7 +476,7 @@ public class ChessProject {
             //minor piece endgame, any material advantage is very important
             materialModifier = 3;
         }
-        double subtotal = activePiecesModifier * tacticalOutput
+        float subtotal = activePiecesModifier * tacticalOutput
         + (1 - activePiecesModifier) * nontacticalOutput+ materialDifferential * materialModifier;
         long whitePawns = pieceBoard[10];
         long blackPawns = pieceBoard[11];
@@ -509,7 +516,43 @@ public class ChessProject {
             subtotal -= 0.2 * (9 - getY(square)) * (9 - getY(square)) * endgamePercent;
             blackHelpers &= (blackHelpers - 1);
         }
-        return (int) Math.round(subtotal);
+        /* Pawn structure considerations:
+        - central isolated pawn: penalty 0.2, if the square in front is occupied by a knight, penalty 0.5
+        - doubled pawns: penalty 0.3
+        - tripled pawns (or more): penalty 0.7
+        - central pawn duo: reward 0.6
+        */
+        for (int i = 0; i < 8; i++) {
+            int whitePawnStack = Long.bitCount(pieceBoard[10] & fileref[i]);
+            int blackPawnStack = Long.bitCount(pieceBoard[11] & fileref[i]);
+            if (whitePawnStack == 2) subtotal -= 3;
+            else if (whitePawnStack >= 3) subtotal -= 7;
+            if (blackPawnStack == 2) subtotal += 3;
+            else if (blackPawnStack >= 3) subtotal += 7;
+        }
+        long whitePawnsToConsider = pieceBoard[10] & 0x3c3c000000L;
+        long blackPawnsToConsider = pieceBoard[11] & 0x3c3c000000L;
+        while (whitePawnsToConsider != 0) {
+            int square = Long.numberOfTrailingZeros(whitePawnsToConsider) + 1;
+            int file = getX(square);
+            if ((pieceBoard[10] & fileref[file]) == 0 && (pieceBoard[10] & fileref[file]) == 0) {
+                if ((pieceBoard[9] & (1L << (square + 7))) == 0) subtotal -= 5;
+                else subtotal -= 2;
+            }
+            whitePawnsToConsider &= (whitePawnsToConsider - 1);
+        }
+        while (blackPawnsToConsider != 0) {
+            int square = Long.numberOfTrailingZeros(blackPawnsToConsider) + 1;
+            int file = getX(square);
+            if ((pieceBoard[11] & fileref[file]) == 0 && (pieceBoard[11] & fileref[file]) == 0) {
+                if ((pieceBoard[8] & (1L << (square - 9))) == 0) subtotal += 5;
+                else subtotal += 2;
+            }
+            blackPawnsToConsider &= (blackPawnsToConsider - 1);
+        }
+        if ((pieceBoard[10] & (1L << 27)) != 0 && (pieceBoard[10] & (1L << 28)) != 0) subtotal += 6;
+        if ((pieceBoard[11] & (1L << 35)) != 0 && (pieceBoard[11] & (1L << 36)) != 0) subtotal -= 6;
+        return Math.round(subtotal);
     }
     static int activePieces() {
         //test if both sides have a lot of really active pieces
@@ -528,6 +571,51 @@ public class ChessProject {
         }
         return reallyActive;
     }
+    static void updateWhitePawnMetrics() {
+        //en passant doesn't affect holes
+        whiteHoles = 0L;
+        //third rank holes
+        if ((pieceBoard[10] & 0x200L) == 0) whiteHoles |= 0x10000L;
+        if ((pieceBoard[10] & 0x500L) == 0) whiteHoles |= 0x20000L;
+        if ((pieceBoard[10] & 0xa00L) == 0) whiteHoles |= 0x40000L;
+        if ((pieceBoard[10] & 0x1400L) == 0) whiteHoles |= 0x80000L;
+        if ((pieceBoard[10] & 0x2800L) == 0) whiteHoles |= 0x100000L;
+        if ((pieceBoard[10] & 0x5000L) == 0) whiteHoles |= 0x200000L;
+        if ((pieceBoard[10] & 0xa000L) == 0) whiteHoles |= 0x400000L;
+        if ((pieceBoard[10] & 0x4000L) == 0) whiteHoles |= 0x800000L;
+        //fourth rank holes
+        if ((pieceBoard[10] & 0x20200L) == 0) whiteHoles |= 0x1000000L;
+        //pawn on b2 still has the POTENTIAL to control a4, even if it doesn't right now
+        //a hole is a square that can't ever be controlled by a pawn without pawn-captures
+        if ((pieceBoard[10] & 0x50500L) == 0) whiteHoles |= 0x2000000L;
+        if ((pieceBoard[10] & 0xa0a00L) == 0) whiteHoles |= 0x4000000L;
+        if ((pieceBoard[10] & 0x1414000L) == 0) whiteHoles |= 0x8000000L;
+        if ((pieceBoard[10] & 0x2828000L) == 0) whiteHoles |= 0x10000000L;
+        if ((pieceBoard[10] & 0x5050000L) == 0) whiteHoles |= 0x20000000L;
+        if ((pieceBoard[10] & 0xa0a0000L) == 0) whiteHoles |= 0x40000000L;
+        if ((pieceBoard[10] & 0x4040000L) == 0) whiteHoles |= 0x80000000L;
+    }
+    static void updateBlackPawnMetrics() {
+        blackHoles = 0L;
+        //third rank holes
+        if ((pieceBoard[11] & 0x2000000000000L) == 0) blackHoles |= 0x10000000000L;
+        if ((pieceBoard[11] & 0x5000000000000L) == 0) blackHoles |= 0x20000000000L;
+        if ((pieceBoard[11] & 0xa000000000000L) == 0) blackHoles |= 0x40000000000L;
+        if ((pieceBoard[11] & 0x14000000000000L) == 0) blackHoles |= 0x80000000000L;
+        if ((pieceBoard[11] & 0x28000000000000L) == 0) blackHoles |= 0x100000000000L;
+        if ((pieceBoard[11] & 0x50000000000000L) == 0) blackHoles |= 0x200000000000L;
+        if ((pieceBoard[11] & 0xa0000000000000L) == 0) blackHoles |= 0x400000000000L;
+        if ((pieceBoard[11] & 0x40000000000000L) == 0) blackHoles |= 0x800000000000L;
+        //fourth rank holes
+        if ((pieceBoard[11] & 0x2020000000000L) == 0) blackHoles |= 0x100000000L;
+        if ((pieceBoard[11] & 0x5050000000000L) == 0) blackHoles |= 0x200000000L;
+        if ((pieceBoard[11] & 0xa0a0000000000L) == 0) blackHoles |= 0x400000000L;
+        if ((pieceBoard[11] & 0x141400000000000L) == 0) blackHoles |= 0x800000000L;
+        if ((pieceBoard[11] & 0x282800000000000L) == 0) blackHoles |= 0x1000000000L;
+        if ((pieceBoard[11] & 0x505000000000000L) == 0) blackHoles |= 0x2000000000L;
+        if ((pieceBoard[11] & 0xa0a000000000000L) == 0) blackHoles |= 0x4000000000L;
+        if ((pieceBoard[11] & 0x404000000000000L) == 0) blackHoles |= 0x8000000000L;
+    }
     static void update(int square) {
         pieceActivity[square-1] = 0;
         material[square-1] = 0;
@@ -539,88 +627,170 @@ public class ChessProject {
         int piece = mailbox[square-1];
         if (piece == 0) return;
         int modifier = (piece % 2 == 1) ? 1 : -1;
-        int sameColorPawn = (23 - modifier) / 2;
-        long pieceVision = getBitboard(square-1, occupiedSquares(true) | occupiedSquares(false), piece);
+        int x = getX(square);
+        int y = getY(square);
+        long occupied = occupiedSquares(true) | occupiedSquares(false);
+        long controlledByEnemyPawns = (piece % 2 == 1) ? getCompositeBitboard(pieceBoard[11], 0L) : getCompositeBitboard(pieceBoard[10], 0L);
+        long pieceVision = getBitboard(square-1, occupied, piece);
         if ((pieceVision & (1L << 27)) != 0 && piece != 1 && piece != 2)
-        centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        centralControl[square-1] = centralControl[square-1] + modifier;
         if ((pieceVision & (1L << 28)) != 0 && piece != 1 && piece != 2)
-        centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        centralControl[square-1] = centralControl[square-1] + modifier;
         if ((pieceVision & (1L << 35)) != 0 && piece != 1 && piece != 2)
-        centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
+        centralControl[square-1] = centralControl[square-1] + modifier;
         if ((pieceVision & (1L << 36)) != 0 && piece != 1 && piece != 2)
-        centralControl[square-1] = (byte) (centralControl[square-1] + modifier);
-        material[square-1] = (byte) materialWorth(piece);
-        if (piece == 1 || piece == 2) {
-            double endgame = percentEndgame();
-            double kingDistance = distanceToCenter[square-1];
-            pieceActivity[square-1] = (byte) Math.round(modifier * 2 * (10 - kingDistance * 1.7) * endgame);
-            int pawnShield = 0;
-            if (piecePresent(sameColorPawn, translate(square, 0, modifier))) pawnShield += 10;
-            if (piecePresent(sameColorPawn, translate(square, 1, modifier))) pawnShield += 5;
-            if (piecePresent(sameColorPawn, translate(square, -1, modifier))) pawnShield += 5;
-            kingSafety[square-1] = (byte) Math.round(modifier * pawnShield * (1 - endgame));
-        }
-        if (piece == 3 || piece == 4) {
-            pieceActivity[square-1] = (byte) (modifier * Long.bitCount(pieceVision) / 2);
-        } else if (piece == 5 || piece == 6 || piece == 7 || piece == 8) {
-            pieceActivity[square-1] = (byte) (modifier * Long.bitCount(pieceVision));
-        }  
-        if (piece == 9 || piece == 10) {
-            int equivalentY = 9 - getY(square);
-            int equivalent = getX(square) + 8 * (equivalentY - 1);
-            pieceActivity[square-1] = (byte) (modifier * knightBonus[(piece == 9) ? square-1 : equivalent-1]);
-            if (getY(square) == ((piece == 9) ? 5 : 4) || getY(square) == ((piece == 9) ? 6 : 3)) {
-                //knight outposts typically only apply on 5th and 6th rank (white), 4th and 3rd rank (black)
-                if (getX(square) >= 3 && getX(square) <= 6) {
-                    //center files, which are more valuable
-                    if (piecePresent(sameColorPawn, translate(square, 1, -modifier))
-                    || piecePresent(sameColorPawn, translate(square, -1, -modifier))) {
-                        outposts[square-1] = (byte) (modifier * 8);
+        centralControl[square-1] = centralControl[square-1] + modifier;
+        material[square-1] = materialWorth(piece);
+        float endgame;
+        int addition;
+        switch (piece) {
+            case 1:
+            case 2:
+                endgame = percentEndgame();
+                float kingDistance = distanceToCenter[square-1];
+                pieceActivity[square-1] = Math.round(modifier * 2 * (10 - kingDistance * 1.7f) * endgame);
+                float safety = 2 * (10 - kingDistance * 1.7f);
+                long enemyPiecesClose = (occupiedSquares(piece % 2 == 0) & quadrantref[quadrant[square-1]-1]);
+                //only include super close pieces
+                while (enemyPiecesClose != 0) {
+                    int squareid = Long.numberOfTrailingZeros(enemyPiecesClose);
+                    int newPiece = mailbox[squareid];
+                    int worth = Math.abs(materialWorth(newPiece));
+                    float dangerFactor = (float) Math.hypot(getX(squareid + 1) - x, getY(squareid + 1) - y); //higher = less danger, lower = more danger
+                    long thatPieceVision = getBitboard(squareid, occupied, newPiece);
+                    while (thatPieceVision != 0) {
+                        int squareSeen = Long.numberOfTrailingZeros(thatPieceVision) + 1;
+                        //factor in how far away  squareSeen is to the king and how powerful the seeing piece is
+                        dangerFactor *= Math.hypot(getX(squareSeen) - x, getY(squareSeen) - y);
+                        if (dangerFactor != 0) safety -= worth / dangerFactor;
+                        thatPieceVision &= (thatPieceVision - 1);
+                    }
+                    enemyPiecesClose &= (enemyPiecesClose - 1);
+                }
+                kingSafety[square-1] = Math.round(modifier * safety * (1 - endgame));
+                break;
+            case 3:
+            case 4:
+                pieceActivity[square-1] = modifier * (Long.bitCount(pieceVision & (~controlledByEnemyPawns)) / 2);
+                break;
+            case 5:
+                pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
+                if (getY(square) == 7) rooksSeventh[square-1] = 15;
+                if (getY(square) == 6 || getY(square) == 8) rooksSeventh[square-1] = 5;
+                break;
+            case 6:
+                pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
+                if (getY(square) == 2) rooksSeventh[square-1] = -15;
+                if (getY(square) == 3 || getY(square) == 1) rooksSeventh[square-1] = -5;
+                break;
+            case 7:
+                pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
+                if ((square == 36 || square == 37) && ((1L << (square - 1)) & blackHoles) != 0) {
+                    if (piecePresent(11, translate(square, 1, -1))
+                    || piecePresent(11, translate(square, -1, -1)))
+                    outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 4 : 2;
+                }
+                break;
+            case 8:
+                pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
+                if ((square == 28 || square == 29) && ((1L << (square - 1)) & whiteHoles) != 0) {
+                    if (piecePresent(12, translate(square, 1, 1))
+                    || piecePresent(12, translate(square, -1, 1)))
+                    outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -4 : -2;
+                }
+                break;
+            case 9:
+                pieceActivity[square-1] = modifier * knightBonus[square-1];
+                if (((1L << (square - 1)) & blackHoles) != 0) {
+                    if (piecePresent(11, translate(square, 1, -1))
+                    || piecePresent(11, translate(square, -1, -1)))
+                    outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 10 : 5;
+                    else outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 5 : 3;
+                }
+                break;
+            case 10:
+                int equivalentY = 9 - getY(square);
+                int equivalent = getX(square) + 8 * (equivalentY - 1);
+                pieceActivity[square-1] = modifier * knightBonus[equivalent-1];
+                if (((1L << (square - 1)) & whiteHoles) != 0) {
+                    if (piecePresent(12, translate(square, 1, 1))
+                    || piecePresent(12, translate(square, -1, 1)))
+                    outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -10 : -5;
+                    else outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -5 : -3;
+                }
+                break;
+            case 11:
+                endgame = percentEndgame();
+                addition = getY(square) * getY(square);
+                if (endgame > 0.9) {
+                    //outside passed pawns are super valuable in the endgame
+                    switch (getX(square)) {
+                        case 3:
+                        case 6:
+                            space[square-1] = Math.round(addition / 12.0f);
+                            break;
+                        case 4:
+                        case 5:
+                            space[square-1] = Math.round(addition / 7.0f);
+                            break;
+                        default:
+                            space[square-1] = Math.round(addition / 4.0f);
+                            break;
                     }
                 } else {
-                    // flank files
-                    if (piecePresent(sameColorPawn, translate(square, 1, -modifier))
-                    || piecePresent(sameColorPawn, translate(square, -1, -modifier))) {
-                        outposts[square-1] = (byte) (modifier * 4);
+                    //central space is more valuable in the middlegame
+                    switch (getX(square)) {
+                        case 3:
+                        case 6:
+                            space[square-1] = Math.round(addition / 4.0f);
+                            break;
+                        case 4:
+                        case 5:
+                            space[square-1] = Math.round(addition / 7.0f);
+                            break;
+                        default:
+                            space[square-1] = Math.round(addition / 12.0f);
+                            break;
                     }
                 }
-            }
-        }
-        if (piece == 5) {
-            if (getY(square) == 7) rooksSeventh[square-1] = 15;
-            if (getY(square) == 6 || getY(square) == 8) rooksSeventh[square-1] = 5;
-        }
-        if (piece == 6) {
-            if (getY(square) == 2) rooksSeventh[square-1] = -15;
-            if (getY(square) == 3 || getY(square) == 1) rooksSeventh[square-1] = -5;
-        }
-        if (piece == 7 || piece == 8) {
-            int square1 = (piece == 7) ? 36 : 28;
-            int square2 = (piece == 7) ? 37 : 29;
-            if (square == square1 || square == square2) {
-                if (piecePresent(sameColorPawn, translate(square, 1, -modifier))
-                || piecePresent(sameColorPawn, translate(square, -1, -modifier))) {
-                    outposts[square-1] = (byte) (modifier * 5);
+                break;
+            case 12:
+                endgame = percentEndgame();
+                addition = -1 * (9 - getY(square)) * (9 - getY(square));
+                if (endgame > 0.9) {
+                    //outside passed pawns are super valuable in the endgame
+                    switch (getX(square)) {
+                        case 3:
+                        case 6:
+                            space[square-1] = Math.round(addition / 12.0f);
+                            break;
+                        case 4:
+                        case 5:
+                            space[square-1] = Math.round(addition / 7.0f);
+                            break;
+                        default:
+                            space[square-1] = Math.round(addition / 4.0f);
+                            break;
+                    }
+                } else {
+                    //central space is more valuable in the middlegame
+                    switch (getX(square)) {
+                        case 3:
+                        case 6:
+                            space[square-1] = Math.round(addition / 4.0f);
+                            break;
+                        case 4:
+                        case 5:
+                            space[square-1] = Math.round(addition / 7.0f);
+                            break;
+                        default:
+                            space[square-1] = Math.round(addition / 12.0f);
+                            break;
+                    }
                 }
-            }
-        }
-        if (piece == 11 || piece == 12) {
-            int equivalent = (piece == 11) ? getY(square) : 9 - getY(square);
-            double addition = equivalent * equivalent / 12.0; //flank files, a, b, g, h
-            switch (getX(square)) {
-                // central space is worth more
-                case 3:
-                case 6:
-                    addition *= 0.75; // c and f files
-                    break;
-                case 4:
-                case 5:
-                    addition *= 1.7143; // center files: d and e
-                    break;
-                default:
-                    break;
-            }
-            space[square-1] = (byte) Math.round(modifier * addition);
+                break;
+            default:
+                break;
         }
     }
     static void updateEvaluation(long squares) {
@@ -711,10 +881,10 @@ public class ChessProject {
         System.out.println(currentZobrist);
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
-        int quantity = sortMoves();
+        int quantity = generateMoves();
         for (int i = 0; i < quantity; i++) {
-            int start = extractStart(movesSorted[i]);
-            int end = extractEnd(movesSorted[i]);
+            int start = extractStart(legalMoveList[i]);
+            int end = extractEnd(legalMoveList[i]);
             int x1 = getX(start);
             int y1 = getY(start);
             int x2 = getX(end);
@@ -863,10 +1033,15 @@ public class ChessProject {
         int captured = mailbox[end-1];
         int epSquare = position[5];
         boolean tacticalMove = isTacticalMove(move);
-        boolean pawnStructureChanged = piece == 11 || piece == 12
-        || captured == 11 || captured == 12;
+        boolean pawnStructureChanged = piece == 11 || piece == 12 || captured == 11 || captured == 12;
+        int whiteKing = Long.numberOfTrailingZeros(pieceBoard[0]);
+        int blackKing = Long.numberOfTrailingZeros(pieceBoard[1]);
+        boolean kingSafetyChanged = piece == 1 || piece == 2
+        || quadrant[start-1] == quadrant[whiteKing] || quadrant[end-1] == quadrant[whiteKing]
+        || quadrant[start-1] == quadrant[blackKing] || quadrant[end-1] == quadrant[blackKing];
         undoStackTactical[undoDeep] = tacticalMove;
         undoStackPawnStructureChanged[undoDeep] = pawnStructureChanged;
+        undoStackKingSafetyChanged[undoDeep] = kingSafetyChanged;
         undoStackZobrist[undoDeep] = currentZobrist;
         System.arraycopy(pieceBoard, 0, undoStackPieces[undoDeep], 0, 12);
         System.arraycopy(mailbox, 0, undoStackMailboxes[undoDeep], 0, 64);
@@ -1049,6 +1224,49 @@ public class ChessProject {
         position[0] = 1 - position[0];
         currentZobrist ^= whiteToMove;
         currentZobrist ^= blackToMove;
+        if (pawnStructureChanged) {
+            updateWhitePawnMetrics();
+            updateBlackPawnMetrics();
+            long criticalSquares = 0L;
+            long worthUpdating = 0L;
+            int startX = getX(start);
+            int endX = getX(end);
+            if (piece == 11) {
+                if (startX != 1) criticalSquares |= 1L << (start + 6);
+                if (startX != 8) criticalSquares |= 1L << (start + 8);
+            }
+            if (piece == 11 || captured == 11) {
+                if (endX != 1) criticalSquares |= 1L << (end + 6);
+                if (endX != 8) criticalSquares |= 1L << (end + 8);
+            }
+            if (piece == 12) {
+                if (startX != 1) criticalSquares |= 1L << (start - 10);
+                if (startX != 8) criticalSquares |= 1L << (start - 8);
+            }
+            if (piece == 12 || captured == 12) {
+                if (endX != 1) criticalSquares |= 1L << (end - 10);
+                if (endX != 8) criticalSquares |= 1L << (end - 8);
+            }
+            if (end == epSquare) {
+                if (piece == 11) {
+                    //knight's distance from the end square, so -15 and -17 for white, +15 and +17 for black
+                    if (endX != 1) criticalSquares |= 1L << (end - 18);
+                    if (endX != 8) criticalSquares |= 1L << (end - 16);
+                }
+                if (piece == 12) {
+                    if (endX != 1) criticalSquares |= 1L << (end + 14);
+                    if (endX != 8) criticalSquares |= 1L << (end + 16);
+                }
+            }
+            long pieces = occupiedSquares(true) | occupiedSquares(false);
+            while (criticalSquares != 0) {
+                int criticalSquare = Long.numberOfTrailingZeros(criticalSquares);
+                worthUpdating |= getBitboard(criticalSquare, pieces, 3);
+                worthUpdating |= getBitboard(criticalSquare, 0L, 9);
+                criticalSquares &= (criticalSquares - 1);
+            }
+            updateEvaluation(worthUpdating & pieces);
+        }
         update(start);
         update(end);
         if (start == 5 && end == 3) {
@@ -1069,25 +1287,59 @@ public class ChessProject {
             update(62);
             update(64);
         }
-        if (pawnStructureChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[6] | pieceBoard[7]
-        | pieceBoard[8] | pieceBoard[9] | pieceBoard[10] | pieceBoard[11]);
         else if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
+        if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
         undoDeep++;
     }
     static void restore() {
         undoDeep--;
         boolean tacticalMove = undoStackTactical[undoDeep];
         boolean pawnStructureChanged = undoStackPawnStructureChanged[undoDeep];
+        boolean kingSafetyChanged = undoStackKingSafetyChanged[undoDeep];
         long changedSquares = 0;
         for (int p = 0; p < 12; p++) changedSquares |= pieceBoard[p] ^ undoStackPieces[undoDeep][p];
         System.arraycopy(undoStackPieces[undoDeep], 0, pieceBoard, 0, 12);
         System.arraycopy(undoStackMailboxes[undoDeep], 0, mailbox, 0, 64);
         System.arraycopy(undoStackData[undoDeep], 0, position, 0, 7);
-        updateEvaluation(changedSquares);
         currentZobrist = undoStackZobrist[undoDeep];
-        if (pawnStructureChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[6] | pieceBoard[7]
-        | pieceBoard[8] | pieceBoard[9] | pieceBoard[10] | pieceBoard[11]);
-        else if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
+        if (pawnStructureChanged) {
+            updateWhitePawnMetrics();
+            updateBlackPawnMetrics();
+            long criticalSquares = 0L;
+            long changedSquaresCopy = changedSquares;
+            long squarebit = Long.lowestOneBit(changedSquaresCopy);
+            int square = Long.numberOfTrailingZeros(changedSquaresCopy) + 1;
+            int squareX = getX(square);
+            //don't know what color pawn was moved/captured
+            if (squareX != 1) criticalSquares |= ((squarebit << 7) | (squarebit >>> 9));
+            if (squareX != 8) criticalSquares |= ((squarebit << 9) | (squarebit >>> 7));
+            changedSquaresCopy &= (changedSquaresCopy - 1);
+            squarebit = Long.lowestOneBit(changedSquaresCopy);
+            square = Long.numberOfTrailingZeros(changedSquaresCopy) + 1;
+            squareX = getX(square);
+            if (squareX != 1) criticalSquares |= ((squarebit << 7) | (squarebit >>> 9));
+            if (squareX != 8) criticalSquares |= ((squarebit << 9) | (squarebit >>> 7));
+            //en passant changes 3 squares
+            if (changedSquaresCopy != 0) {
+                squarebit = Long.lowestOneBit(changedSquaresCopy);
+                square = Long.numberOfTrailingZeros(changedSquaresCopy) + 1;
+                squareX = getX(square);
+                if (squareX != 1) criticalSquares |= ((squarebit << 7) | (squarebit >>> 9));
+                if (squareX != 8) criticalSquares |= ((squarebit << 9) | (squarebit >>> 7));
+            }
+            long worthUpdating = 0L;
+            long pieces = occupiedSquares(true) | occupiedSquares(false);
+            while (criticalSquares != 0) {
+                int criticalSquare = Long.numberOfTrailingZeros(criticalSquares);
+                worthUpdating |= getBitboard(criticalSquare, pieces, 3);
+                worthUpdating |= getBitboard(criticalSquare, 0L, 9);
+                criticalSquares &= (criticalSquares - 1);
+            }
+            updateEvaluation(worthUpdating & pieces);
+        }
+        updateEvaluation(changedSquares);
+        if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
+        if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
     }
     static long legalMoves(int square, long checkingPieces, long opposingAttackMap) {
         int piece = mailbox[square-1];
@@ -1160,12 +1412,12 @@ public class ChessProject {
         }
         boolean pieceColor = color(piece);
         int modifier = (pieceColor) ? 1 : -1;
-        double pieceModifier = 1.0d; //helps prioritize certain pieces over others
+        float pieceModifier = 1.0f; //helps prioritize certain pieces over others
         switch (piece) {
-            case 1: case 2: pieceModifier = 0.7; break;
-            case 3: case 4: pieceModifier = 0.8; break;
-            case 7: case 8: case 9: case 10: pieceModifier = 1.2; break;
-            case 11: case 12: pieceModifier = 0.9; break;
+            case 1: case 2: pieceModifier = 0.7f; break;
+            case 3: case 4: pieceModifier = 0.8f; break;
+            case 7: case 8: case 9: case 10: pieceModifier = 1.2f; break;
+            case 11: case 12: pieceModifier = 0.9f; break;
         }
         int captured = mailbox[end-1];
         boolean capture = captured != 0 || ((piece == 11 || piece == 12) && end == position[5]);
@@ -1194,9 +1446,9 @@ public class ChessProject {
         //counting up from 0 as opposed to counting down from 2147483647
         int cumulative = 0;
         //reward center-seeking moves
-        double startProximity = distanceToCenter[start-1];
-        double endProximity = distanceToCenter[end-1];
-        int centerGain = (int) Math.round(startProximity - endProximity);
+        float startProximity = distanceToCenter[start-1];
+        float endProximity = distanceToCenter[end-1];
+        int centerGain = Math.round(startProximity - endProximity);
         if (piece != 1 && piece != 2) cumulative += centerGain;
         //reward forward moves
         cumulative += (pieceColor) ? getY(end) - getY(start) : getY(start) - getY(end);
@@ -1207,13 +1459,13 @@ public class ChessProject {
             //punish pawn moves in front of king if it's not the endgame
             int king = (pieceColor) ? 1 : 2;
             if (piecePresent(king, translate(start, 0, -modifier)))
-            cumulative -= (int) Math.round(20 * (1 - percentEndgame()));
+            cumulative -= Math.round(20 * (1 - percentEndgame()));
         }
         if (piece == 5 || piece == 6) {
             if (getY(end) == ((pieceColor) ? 7 : 2)) cumulative += 25;
             if (getY(end) == ((pieceColor) ? 8 : 1) || getY(end) == ((pieceColor) ? 6 : 3)) cumulative += 10;
         }
-        return (int) Math.round(cumulative * pieceModifier);
+        return Math.round(cumulative * pieceModifier);
     }
     static int generateTacticalMoves() {
         Arrays.fill(tacticalMoves, 0);
@@ -1254,8 +1506,8 @@ public class ChessProject {
         }
         return quantity;
     }
-    static int sortMoves() {
-        Arrays.fill(movesSorted, 0);
+    static int generateMoves() {
+        Arrays.fill(legalMoveList, 0);
         long squares = occupiedSquares(position[0] == 1);
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
         occupiedSquares(true) | occupiedSquares(false));
@@ -1285,18 +1537,20 @@ public class ChessProject {
             int square = Long.numberOfTrailingZeros(squares);
             long allMoves = legalMoves(square+1, check, opposingAttackMap);
             while (allMoves != 0) {
-                movesSorted[quantity++] = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
+                legalMoveList[quantity++] = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
                 allMoves &= (allMoves - 1);
             }
             squares &= (squares - 1);
         }
+        return quantity;
+    }
+    static void sortMoves(int quantity) {
         for (int j = 0; j < quantity; j++) {
-            int score = calculateScore(movesSorted[j]);
-            movesWithScores[j] = ((long) (~score) << 32) | (movesSorted[j] & 0xffffffffL);
+            int score = calculateScore(legalMoveList[j]);
+            movesWithScores[j] = ((long) (~score) << 32) | (legalMoveList[j] & 0xffffffffL);
         }
         Arrays.sort(movesWithScores, 0, quantity);
-        for (int j = 0; j < quantity; j++) movesSorted[j] = (int) movesWithScores[j];
-        return quantity;
+        for (int j = 0; j < quantity; j++) legalMoveList[j] = (int) movesWithScores[j];
     }
     static boolean isTacticalMove(int move) {
         int start = extractStart(move);
@@ -1318,12 +1572,12 @@ public class ChessProject {
         return (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]
         | pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) == 0;
     }
-    static double percentEndgame() {
+    static float percentEndgame() {
         int endgameScore = 0; //the higher, the less of an endgame it is, above 1000 it's a middlegame
         endgameScore += Long.bitCount(pieceBoard[2] | pieceBoard[3]) * 400; //queens
         endgameScore += Long.bitCount(pieceBoard[4] | pieceBoard[5]) * 200; //rooks
         endgameScore += Long.bitCount(pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]) * 50; //bishops and knights
-        return 1.0 - Math.min(1000.0, endgameScore) / 1000.0;
+        return 1.0f - Math.min(1000.0f, endgameScore) / 1000.0f;
     }
     static long passedPawns(int type) {
         /*
@@ -1419,14 +1673,15 @@ public class ChessProject {
         Arrays.fill(movesStorageQ[depth], 0);
         int quantity;
         if (inCheck()) {
-            quantity = sortMoves();
+            quantity = generateMoves();
+            sortMoves(quantity);
             for (int i = 0; i < quantity; i++) {
-                makeMove(movesSorted[i]);
-                System.arraycopy(movesSorted, 0, movesStorageQ[depth], 0, quantity);
+                makeMove(legalMoveList[i]);
+                System.arraycopy(legalMoveList, 0, movesStorageQ[depth], 0, quantity);
                 int potential;
                 potential = evalQ(alpha, beta, depth + 1);
                 restore();
-                System.arraycopy(movesStorageQ[depth], 0, movesSorted, 0, quantity);
+                System.arraycopy(movesStorageQ[depth], 0, legalMoveList, 0, quantity);
                 if (maximizing) {
                     best = Math.max(best, potential);
                     alpha = Math.max(alpha, best);
@@ -1520,17 +1775,18 @@ public class ChessProject {
         }
         if (depth == 0) return ((long)evalQ(alpha, beta, 0)) << 32;
         //aspiration window
-        int quantity = sortMoves();
+        int quantity = generateMoves();
         if (quantity == 0) {
             if (inCheck()) return (position[0] == 1) ? Long.MIN_VALUE : leftBitsOnly;
             return 0;
         }
+        sortMoves(quantity);
         Arrays.fill(movesStorage[depth - 1], 0);
         int evaluation = maximizing ? -8192 : 8191;
         int bestMove = 0;
         for (int i = 0; i < quantity; i++) {
-            makeMove(movesSorted[i]);
-            System.arraycopy(movesSorted, 0, movesStorage[depth - 1], 0, quantity);
+            makeMove(legalMoveList[i]);
+            System.arraycopy(legalMoveList, 0, movesStorage[depth - 1], 0, quantity);
             int potential;
             //principal variation search
             //search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
@@ -1546,23 +1802,23 @@ public class ChessProject {
                 }
             }
             restore();
-            System.arraycopy(movesStorage[depth - 1], 0, movesSorted, 0, quantity);
+            System.arraycopy(movesStorage[depth - 1], 0, legalMoveList, 0, quantity);
             if (maximizing) {
                 if (potential > evaluation) {
                     evaluation = potential;
-                    bestMove = movesSorted[i];
+                    bestMove = legalMoveList[i];
                 }
                 alpha = Math.max(alpha, evaluation);
             } else {
                 if (potential < evaluation) {
                     evaluation = potential;
-                    bestMove = movesSorted[i];
+                    bestMove = legalMoveList[i];
                 }
                 beta = Math.min(beta, evaluation);
             }
             if (alpha >= beta) {
-                if (!isTacticalMove(movesSorted[i]))
-                storeQuietMove(movesSorted[i], depth);
+                if (!isTacticalMove(legalMoveList[i]))
+                storeQuietMove(legalMoveList[i], depth);
                 break;
             }
         }
@@ -1675,6 +1931,8 @@ public class ChessProject {
             }
             current = fen[++i];
         }
+        updateWhitePawnMetrics();
+        updateBlackPawnMetrics();
         updateEvaluation(occupiedSquares(true) | occupiedSquares(false));
         System.out.print("Show stats? ");
         if (scanner.nextBoolean()) {
@@ -1683,7 +1941,7 @@ public class ChessProject {
         }
         long pieceSquares = occupiedSquares(position[0] == 1);
         if (!sufficientMaterial() || position[6] >= 100) return 6;
-        int quantity = sortMoves();
+        int quantity = generateMoves();
         if (quantity == 0) return 6;
         System.out.print("Depth: ");
         maxDepth = scanner.nextInt();
@@ -1695,10 +1953,10 @@ public class ChessProject {
                 long start = System.nanoTime();
                 nodes = 0;
                 lastCompleted = evalDepth(j, -8192, 8191, lastCompleted);
-                double timeTaken = (System.nanoTime() - start) / 1000000000.0;
+                float timeTaken = (System.nanoTime() - start) / 1000000000.0f;
                 int raw = (int)(lastCompleted >> 32);
-                double rawEval = raw;
-                double evaluation = rawEval / 10.0; // convert decipawns (1/10 pawn) to pawns
+                float rawEval = raw;
+                float evaluation = rawEval / 10.0f; // convert decipawns (1/10 pawn) to pawns
                 if (evaluation == 819.1 || evaluation == -819.2) {
                     System.out.print("\u001b[33m");
                     System.out.printf("Evaluation: %f", evaluation);
