@@ -37,15 +37,6 @@ public class ChessProject {
     static long whiteHoles = 0L, blackHoles = 0L;
     static long controlledByWhitePawns = 0L, controlledByBlackPawns = 0L;
     static int maxDepth;
-    //undo stack
-    static long[][] undoStackPieces = new long[100][12];
-    static byte[][] undoStackMailboxes = new byte[100][64];
-    static int[][] undoStackData = new int[100][7];
-    static boolean[] undoStackTactical = new boolean[100];
-    static boolean[] undoStackPawnStructureChanged = new boolean[100];
-    static boolean[] undoStackKingSafetyChanged = new boolean[100];
-    static long[] undoStackZobrist = new long[100];
-    static int undoDeep = 0;
     //move ordering heuristics
     static int slot = 0;
     static boolean[] killerMoves = new boolean[4096];
@@ -1030,13 +1021,6 @@ public class ChessProject {
         boolean kingSafetyChanged = piece == 1 || piece == 2
         || quadrant[start-1] == quadrant[whiteKing] || quadrant[end-1] == quadrant[whiteKing]
         || quadrant[start-1] == quadrant[blackKing] || quadrant[end-1] == quadrant[blackKing];
-        undoStackTactical[undoDeep] = tacticalMove;
-        undoStackPawnStructureChanged[undoDeep] = pawnStructureChanged;
-        undoStackKingSafetyChanged[undoDeep] = kingSafetyChanged;
-        undoStackZobrist[undoDeep] = currentZobrist;
-        System.arraycopy(pieceBoard, 0, undoStackPieces[undoDeep], 0, 12);
-        System.arraycopy(mailbox, 0, undoStackMailboxes[undoDeep], 0, 64);
-        System.arraycopy(position, 0, undoStackData[undoDeep], 0, 7);
         if (position[5] != 0 && piece != 11 && piece != 12) {
             currentZobrist ^= zobrist[position[5]-1][12];
             position[5] = 0;
@@ -1215,11 +1199,13 @@ public class ChessProject {
         position[0] = 1 - position[0];
         currentZobrist ^= whiteToMove;
         currentZobrist ^= blackToMove;
+        long worthUpdatingHorizontal = 0L;
+        long worthUpdatingDiagonal = 0L;
+        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (pawnStructureChanged) {
             updateWhitePawnMetrics();
             updateBlackPawnMetrics();
             long criticalSquares = 0L;
-            long worthUpdating = 0L;
             int startX = getX(start);
             int endX = getX(end);
             if (piece == 11) {
@@ -1243,94 +1229,244 @@ public class ChessProject {
                     //knight's distance from the end square, so -15 and -17 for white, +15 and +17 for black
                     if (endX != 1) criticalSquares |= 1L << (end - 18);
                     if (endX != 8) criticalSquares |= 1L << (end - 16);
+                    worthUpdatingHorizontal |= getBitboard(end - 9, pieces, 5);
+                    worthUpdatingDiagonal |= getBitboard(end - 9, pieces, 7);
                 }
                 if (piece == 12) {
                     if (endX != 1) criticalSquares |= 1L << (end + 14);
                     if (endX != 8) criticalSquares |= 1L << (end + 16);
+                    worthUpdatingHorizontal |= getBitboard(end + 7, pieces, 5);
+                    worthUpdatingDiagonal |= getBitboard(end + 7, pieces, 7);
                 }
             }
-            long pieces = occupiedSquares(true) | occupiedSquares(false);
+            updateEvaluation(criticalSquares & (pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]));
             while (criticalSquares != 0) {
                 int criticalSquare = Long.numberOfTrailingZeros(criticalSquares);
-                worthUpdating |= getBitboard(criticalSquare, pieces, 3);
-                worthUpdating |= getBitboard(criticalSquare, 0L, 9);
+                worthUpdatingHorizontal |= getBitboard(criticalSquare, pieces, 5);
+                worthUpdatingDiagonal |= getBitboard(criticalSquare, pieces, 7);
                 criticalSquares &= (criticalSquares - 1);
             }
-            updateEvaluation(worthUpdating & pieces);
         }
         update(start);
         update(end);
         if (start == 5 && end == 3) {
             update(1);
             update(4);
+            worthUpdatingHorizontal |= getBitboard(0, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(3, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(0, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(3, pieces, 7);
         }
         if (start == 5 && end == 7) {
             update(6);
             update(8);
+            worthUpdatingHorizontal |= getBitboard(5, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(7, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(5, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(7, pieces, 7);
         }
         if (start == 61 && end == 59) {
             //black castle long
             update(57);
             update(60);
+            worthUpdatingHorizontal |= getBitboard(56, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(59, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(56, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(59, pieces, 7);
         }
         if (start == 61 && end == 63) {
             //black castle short
             update(62);
             update(64);
+            worthUpdatingHorizontal |= getBitboard(61, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(63, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(61, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(63, pieces, 7);
         }
-        else if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
+        worthUpdatingHorizontal |= getBitboard(start - 1, pieces, 5);
+        worthUpdatingHorizontal |= getBitboard(end - 1, pieces, 5);
+        worthUpdatingDiagonal |= getBitboard(start - 1, pieces, 7);
+        worthUpdatingDiagonal |= getBitboard(end - 1, pieces, 7);
+        updateEvaluation(worthUpdatingHorizontal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]));
+        updateEvaluation(worthUpdatingDiagonal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[6] | pieceBoard[7]));
+        if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
         if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
-        undoDeep++;
     }
-    static void restore() {
-        undoDeep--;
-        boolean tacticalMove = undoStackTactical[undoDeep];
-        boolean pawnStructureChanged = undoStackPawnStructureChanged[undoDeep];
-        boolean kingSafetyChanged = undoStackKingSafetyChanged[undoDeep];
-        long changedSquares = 0;
-        for (int p = 0; p < 12; p++) changedSquares |= pieceBoard[p] ^ undoStackPieces[undoDeep][p];
-        System.arraycopy(undoStackPieces[undoDeep], 0, pieceBoard, 0, 12);
-        System.arraycopy(undoStackMailboxes[undoDeep], 0, mailbox, 0, 64);
-        System.arraycopy(undoStackData[undoDeep], 0, position, 0, 7);
-        currentZobrist = undoStackZobrist[undoDeep];
+    static void undoMove(int move, int movedPiece, int captured, boolean wcsBefore, boolean wclBefore,
+    boolean bcsBefore, boolean bclBefore, int enPassantSquareBefore, int halfmoveBefore, long zobristBefore) {
+        int start = extractStart(move);
+        int end = extractEnd(move);
+        int pieceAfter = mailbox[end-1];
+        boolean enPassantCapture = end == enPassantSquareBefore && (movedPiece == 11 || movedPiece == 12);
+        boolean tacticalMove = captured != 0 || enPassantCapture;
+        long changedSquares = (1L << (start - 1)) | (1L << (end - 1));
+        if (enPassantCapture) changedSquares |= 1L << ((movedPiece == 11) ? end - 9 : end + 7);
+        if (movedPiece == 1 && start == 5) {
+            if (end == 3) changedSquares |= 1L | (1L << 3);
+            if (end == 7) changedSquares |= (1L << 7) | (1L << 5);
+        }
+        if (movedPiece == 2 && start == 61) {
+            if (end == 59) changedSquares |= (1L << 56) | (1L << 59);
+            if (end == 63) changedSquares |= (1L << 63) | (1L << 61);
+        }
+        boolean pawnStructureChanged = movedPiece == 11 || movedPiece == 12 || captured == 11 || captured == 12;
+        int whiteKing = Long.numberOfTrailingZeros(pieceBoard[0]);
+        int blackKing = Long.numberOfTrailingZeros(pieceBoard[1]);
+        boolean kingSafetyChanged = movedPiece == 1 || movedPiece == 2
+        || quadrant[start-1] == quadrant[whiteKing] || quadrant[end-1] == quadrant[whiteKing]
+        || quadrant[start-1] == quadrant[blackKing] || quadrant[end-1] == quadrant[blackKing];
+        position[0] = 1 - position[0];
+        position[5] = enPassantSquareBefore;
+        position[6] = halfmoveBefore;
+        if (enPassantCapture) {
+            if (movedPiece == 11) {
+                pieceBoard[11] |= (1L << (end - 9));
+                mailbox[end-9] = 12;
+            } else {
+                pieceBoard[10] |= (1L << (end + 7));
+                mailbox[end+7] = 11;
+            }
+        }
+        pieceBoard[pieceAfter-1] ^= (1L << (end - 1));
+        pieceBoard[movedPiece-1] |= (1L << (start - 1));
+        mailbox[end-1] = 0;
+        mailbox[start-1] = (byte) movedPiece;
+        if (position[1] == 0 && wcsBefore) {
+            position[1] = 1;
+        }
+        if (position[2] == 0 && wclBefore) {
+            position[2] = 1;
+        }
+        if (position[3] == 0 && bcsBefore) {
+            position[3] = 1;
+        }
+        if (position[4] == 0 && bclBefore) {
+            position[4] = 1;
+        }
+        if (captured != 0) {
+            pieceBoard[captured-1] |= (1L << (end - 1));
+            mailbox[end-1] = (byte) captured;
+        }
+        if (movedPiece == 1 && start == 5) {
+            if (end == 7) {
+                pieceBoard[4] |= 128L;
+                pieceBoard[4] ^= 32L;
+                mailbox[5] = 0;
+                mailbox[7] = 5;
+            }
+            if (end == 3) {
+                pieceBoard[4] |= 1L;
+                pieceBoard[4] ^= 8L;
+                mailbox[3] = 0;
+                mailbox[0] = 5;
+            }
+        }
+        if (movedPiece == 2 && start == 61) {
+            if (end == 63) {
+                pieceBoard[5] |= (1L << 63);
+                pieceBoard[5] ^= (1L << 61);
+                mailbox[61] = 0;
+                mailbox[63] = 6;
+            }
+            if (end == 59) {
+                pieceBoard[5] |= (1L << 56);
+                pieceBoard[5] ^= (1L << 59);
+                mailbox[59] = 0;
+                mailbox[56] = 6;
+            }
+        }
+        long worthUpdatingHorizontal = 0L;
+        long worthUpdatingDiagonal = 0L;
+        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (pawnStructureChanged) {
             updateWhitePawnMetrics();
             updateBlackPawnMetrics();
             long criticalSquares = 0L;
-            long changedSquaresCopy = changedSquares;
-            long squarebit = Long.lowestOneBit(changedSquaresCopy);
-            int square = Long.numberOfTrailingZeros(changedSquaresCopy) + 1;
-            int squareX = getX(square);
-            //don't know what color pawn was moved/captured
-            if (squareX != 1) criticalSquares |= ((squarebit << 7) | (squarebit >>> 9));
-            if (squareX != 8) criticalSquares |= ((squarebit << 9) | (squarebit >>> 7));
-            changedSquaresCopy &= (changedSquaresCopy - 1);
-            squarebit = Long.lowestOneBit(changedSquaresCopy);
-            square = Long.numberOfTrailingZeros(changedSquaresCopy) + 1;
-            squareX = getX(square);
-            if (squareX != 1) criticalSquares |= ((squarebit << 7) | (squarebit >>> 9));
-            if (squareX != 8) criticalSquares |= ((squarebit << 9) | (squarebit >>> 7));
-            //en passant changes 3 squares
-            if (changedSquaresCopy != 0) {
-                squarebit = Long.lowestOneBit(changedSquaresCopy);
-                square = Long.numberOfTrailingZeros(changedSquaresCopy) + 1;
-                squareX = getX(square);
-                if (squareX != 1) criticalSquares |= ((squarebit << 7) | (squarebit >>> 9));
-                if (squareX != 8) criticalSquares |= ((squarebit << 9) | (squarebit >>> 7));
+            int startX = getX(start);
+            int endX = getX(end);
+            if (movedPiece == 11) {
+                if (startX != 1) criticalSquares |= 1L << (start + 6);
+                if (startX != 8) criticalSquares |= 1L << (start + 8);
             }
-            long worthUpdating = 0L;
-            long pieces = occupiedSquares(true) | occupiedSquares(false);
+            if (movedPiece == 11 || captured == 11) {
+                if (endX != 1) criticalSquares |= 1L << (end + 6);
+                if (endX != 8) criticalSquares |= 1L << (end + 8);
+            }
+            if (movedPiece == 12) {
+                if (startX != 1) criticalSquares |= 1L << (start - 10);
+                if (startX != 8) criticalSquares |= 1L << (start - 8);
+            }
+            if (movedPiece == 12 || captured == 12) {
+                if (endX != 1) criticalSquares |= 1L << (end - 10);
+                if (endX != 8) criticalSquares |= 1L << (end - 8);
+            }
+            if (enPassantCapture) {
+                if (movedPiece == 11) {
+                    //knight's distance from the end square, so -15 and -17 for white, +15 and +17 for black
+                    if (endX != 1) criticalSquares |= 1L << (end - 18);
+                    if (endX != 8) criticalSquares |= 1L << (end - 16);
+                    worthUpdatingHorizontal |= getBitboard(end - 9, pieces, 5);
+                    worthUpdatingDiagonal |= getBitboard(end - 9, pieces, 7);
+                }
+                if (movedPiece == 12) {
+                    if (endX != 1) criticalSquares |= 1L << (end + 14);
+                    if (endX != 8) criticalSquares |= 1L << (end + 16);
+                    worthUpdatingHorizontal |= getBitboard(end + 7, pieces, 5);
+                    worthUpdatingDiagonal |= getBitboard(end + 7, pieces, 7);
+                }
+            }
+            updateEvaluation(criticalSquares & (pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]));
             while (criticalSquares != 0) {
                 int criticalSquare = Long.numberOfTrailingZeros(criticalSquares);
-                worthUpdating |= getBitboard(criticalSquare, pieces, 3);
-                worthUpdating |= getBitboard(criticalSquare, 0L, 9);
+                worthUpdatingHorizontal |= getBitboard(criticalSquare, pieces, 5);
+                worthUpdatingDiagonal |= getBitboard(criticalSquare, pieces, 7);
                 criticalSquares &= (criticalSquares - 1);
             }
-            updateEvaluation(worthUpdating & pieces);
         }
         updateEvaluation(changedSquares);
+        if (start == 5 && end == 3) {
+            update(1);
+            update(4);
+            worthUpdatingHorizontal |= getBitboard(0, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(3, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(0, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(3, pieces, 7);
+        }
+        if (start == 5 && end == 7) {
+            update(6);
+            update(8);
+            worthUpdatingHorizontal |= getBitboard(5, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(7, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(5, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(7, pieces, 7);
+        }
+        if (start == 61 && end == 59) {
+            //black castle long
+            update(57);
+            update(60);
+            worthUpdatingHorizontal |= getBitboard(56, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(59, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(56, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(59, pieces, 7);
+        }
+        if (start == 61 && end == 63) {
+            //black castle short
+            update(62);
+            update(64);
+            worthUpdatingHorizontal |= getBitboard(61, pieces, 5);
+            worthUpdatingHorizontal |= getBitboard(63, pieces, 5);
+            worthUpdatingDiagonal |= getBitboard(61, pieces, 7);
+            worthUpdatingDiagonal |= getBitboard(63, pieces, 7);
+        }
+        worthUpdatingHorizontal |= getBitboard(start - 1, pieces, 5);
+        worthUpdatingHorizontal |= getBitboard(end - 1, pieces, 5);
+        worthUpdatingDiagonal |= getBitboard(start - 1, pieces, 7);
+        worthUpdatingDiagonal |= getBitboard(end - 1, pieces, 7);
+        updateEvaluation(worthUpdatingHorizontal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]));
+        updateEvaluation(worthUpdatingDiagonal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[6] | pieceBoard[7]));
         if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
         if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
+        currentZobrist = zobristBefore;
     }
     static long legalMoves(int square, long checkingPieces, long opposingAttackMap) {
         int piece = mailbox[square-1];
@@ -1640,7 +1776,6 @@ public class ChessProject {
         nodes++;
         boolean maximizing = position[0] == 1;
         boolean checked = inCheck();
-        updateEvaluation(pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[6] | pieceBoard[7]);
         int best = currentCount();
         if (!checked) {
             if (maximizing) {
@@ -1660,10 +1795,21 @@ public class ChessProject {
             sortMoves(quantity);
             System.arraycopy(legalMoveList, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
-                makeMove(movesStorageQ[depth][i]);
+                int move = movesStorageQ[depth][i];
+                int movedPiece = mailbox[extractStart(move) - 1];
+                int captured = mailbox[extractEnd(move) - 1];
+                boolean wcsBefore = position[1] == 1;
+                boolean wclBefore = position[2] == 1;
+                boolean bcsBefore = position[3] == 1;
+                boolean bclBefore = position[4] == 1;
+                int enPassantSquareBefore = position[5];
+                int halfmoveBefore = position[6];
+                long zobristBefore = currentZobrist;
+                makeMove(move);
                 int potential;
                 potential = evalQ(alpha, beta, depth + 1);
-                restore();
+                undoMove(move, movedPiece, captured, wcsBefore, wclBefore, bcsBefore,
+                bclBefore, enPassantSquareBefore, halfmoveBefore, zobristBefore);
                 if (maximizing) {
                     best = Math.max(best, potential);
                     alpha = Math.max(alpha, best);
@@ -1677,10 +1823,21 @@ public class ChessProject {
             quantity = generateTacticalMoves(opposingAttackMap);
             System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
-                makeMove(movesStorageQ[depth][i]);
+                int move = movesStorageQ[depth][i];
+                int movedPiece = mailbox[extractStart(move) - 1];
+                int captured = mailbox[extractEnd(move) - 1];
+                boolean wcsBefore = position[1] == 1;
+                boolean wclBefore = position[2] == 1;
+                boolean bcsBefore = position[3] == 1;
+                boolean bclBefore = position[4] == 1;
+                int enPassantSquareBefore = position[5];
+                int halfmoveBefore = position[6];
+                long zobristBefore = currentZobrist;
+                makeMove(move);
                 int potential;
                 potential = evalQ(alpha, beta, depth + 1);
-                restore();
+                undoMove(move, movedPiece, captured, wcsBefore, wclBefore, bcsBefore,
+                bclBefore, enPassantSquareBefore, halfmoveBefore, zobristBefore);
                 if (maximizing) {
                     best = Math.max(best, potential);
                     alpha = Math.max(alpha, best);
@@ -1768,7 +1925,17 @@ public class ChessProject {
         int evaluation = maximizing ? -8192 : 8191;
         int bestMove = 0;
         for (int i = 0; i < quantity; i++) {
-            makeMove(movesStorage[depth - 1][i]);
+            int move = movesStorage[depth - 1][i];
+            int movedPiece = mailbox[extractStart(move) - 1];
+            int captured = mailbox[extractEnd(move) - 1];
+            boolean wcsBefore = position[1] == 1;
+            boolean wclBefore = position[2] == 1;
+            boolean bcsBefore = position[3] == 1;
+            boolean bclBefore = position[4] == 1;
+            int enPassantSquareBefore = position[5];
+            int halfmoveBefore = position[6];
+            long zobristBefore = currentZobrist;
+            makeMove(move);
             int potential;
             //principal variation search
             //search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
@@ -1783,7 +1950,8 @@ public class ChessProject {
                     potential = (trial < beta) ? (int)(evalDepth(depth - 1, alpha, beta, baseLeftBit) >> 32) : trial;
                 }
             }
-            restore();
+            undoMove(move, movedPiece, captured, wcsBefore, wclBefore, bcsBefore,
+            bclBefore, enPassantSquareBefore, halfmoveBefore, zobristBefore);
             if (maximizing) {
                 if (potential > evaluation) {
                     evaluation = potential;
