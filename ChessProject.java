@@ -402,7 +402,7 @@ public class ChessProject {
         int moveEnd = extractEnd(move) - 1;
         int requiredIndex = (moveStart << 6) | moveEnd;
         killerMoves[requiredIndex] = true;
-        history[requiredIndex] = Math.min(history[requiredIndex], 500); //store history
+        history[requiredIndex] = Math.min(history[requiredIndex] + 1, 500); //store history
     }
     static void store(int evaluation, int bestMove, int depth, int bound) {
         int index = (int)(currentZobrist & (length - 1));
@@ -478,8 +478,6 @@ public class ChessProject {
         }
         float subtotal = activePiecesModifier * tacticalOutput
         + (1 - activePiecesModifier) * nontacticalOutput+ materialDifferential * materialModifier;
-        long whitePawns = pieceBoard[10];
-        long blackPawns = pieceBoard[11];
         long whitePassers = passedPawns(1);
         long whiteCandidates = passedPawns(2);
         long whiteHelpers = passedPawns(3);
@@ -881,7 +879,20 @@ public class ChessProject {
         System.out.println(currentZobrist);
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
-        int quantity = generateMoves();
+        int quantity = generateMoves(getCompositeBitboard(occupiedSquares(position[0] == 0), occupied));
+        for (int i = 0; i < quantity; i++) {
+            int start = extractStart(legalMoveList[i]);
+            int end = extractEnd(legalMoveList[i]);
+            int x1 = getX(start);
+            int y1 = getY(start);
+            int x2 = getX(end);
+            int y2 = getY(end);
+            System.out.printf("%c%d%c%d", ((char)(x1 + 96)), y1, ((char)(x2 + 96)), y2);
+            System.out.print(", ");
+        }
+        sortMoves(quantity);
+        System.out.println("");
+        System.out.print("After move ordering: ");
         for (int i = 0; i < quantity; i++) {
             int start = extractStart(legalMoveList[i]);
             int end = extractEnd(legalMoveList[i]);
@@ -915,11 +926,11 @@ public class ChessProject {
         System.out.print("Static evaluation: ");
         System.out.println(currentCount());
     }
-    // Hot paths!
-    static long legalMovesBasic(int square) {
+    static long legalMovesBasic(int square, long opposingAttackMap) {
         long output = 0L;
         int piece = mailbox[square-1];
         boolean color = color(piece);
+        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (piece == 11) {
             //pawn
             int candidate = translate(square, 1, 1);
@@ -942,7 +953,7 @@ public class ChessProject {
                     output |= (1L << (candidate-1));
                 }
             }
-            if (position[5] != 0 && ((occupiedSquares(true) | occupiedSquares(false)) & (1L << (position[5]-1))) == 0 &&
+            if (position[5] != 0 && (pieces & (1L << (position[5]-1))) == 0 &&
                     (position[5] == translate(square, 1, 1) || position[5] == translate(square, -1, 1))) {
                 output |= (1L << (position[5]-1));
             }
@@ -968,12 +979,12 @@ public class ChessProject {
                     output |= (1L << (candidate-1));
                 }
             }
-            if (position[5] != 0 && ((occupiedSquares(true) | occupiedSquares(false)) & (1L << (position[5]-1))) == 0 &&
+            if (position[5] != 0 && (pieces & (1L << (position[5]-1))) == 0 &&
                     (position[5] == translate(square, 1, -1) || position[5] == translate(square, -1, -1))) {
                 output |= (1L << (position[5]-1));
             }
         } else {
-            long squares = getBitboard(square-1, occupiedSquares(true) | occupiedSquares(false), piece);
+            long squares = getBitboard(square-1, pieces, piece);
             while (squares != 0) {
                 int p = mailbox[Long.numberOfTrailingZeros(squares)];
                 if (p == 0 || (color(p) != color && p != 1 && p != 2)) {
@@ -985,42 +996,22 @@ public class ChessProject {
         if (!inCheck()) {
             if (square == 5) {
                 if (position[1] == 1 && ((pieceBoard[4] & (1L << 7)) != 0) && isEmpty(6) && isEmpty(7)) {
-                    boolean allowed = true;
-                    pieceBoard[0] = (1L << 5);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[0] = (1L << 6);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[0] = (1L << 4);
-                    if (allowed) output |= (1L << 6);
+                    if ((opposingAttackMap & 32L) == 0 && (opposingAttackMap & 64L) == 0)
+                    output |= (1L << 6);
                 }
                 if (position[2] == 1 && ((pieceBoard[4] & 1L) != 0) && isEmpty(4) && isEmpty(3) && isEmpty(2)) {   
-                    boolean allowed = true; 
-                    pieceBoard[0] = (1L << 3);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[0] = (1L << 2);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[0] = (1L << 4);
-                    if (allowed) output |= (1L << 2);
+                    if ((opposingAttackMap & 8L) == 0 && (opposingAttackMap & 4L) == 0)
+                    output |= 4L;
                 }
             }
             if (square == 61) {
                 if (position[3] == 1 && ((pieceBoard[5] & (1L << 63)) != 0) && isEmpty(62) && isEmpty(63)) {
-                    boolean allowed = true;
-                    pieceBoard[1] = (1L << 61);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[1] = (1L << 62);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[1] = (1L << 60);
-                    if (allowed) output |= (1L << 62);
+                    if ((opposingAttackMap & (1L << 61)) == 0 && (opposingAttackMap & (1L << 62)) == 0)
+                    output |= (1L << 62);
                 }
-                if (position[4] == 1 && ((pieceBoard[5] & (1L << 56)) != 0) && isEmpty(60) && isEmpty(59) && isEmpty(58)) {   
-                    boolean allowed = true; 
-                    pieceBoard[1] = (1L << 59);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[1] = (1L << 58);
-                    if (inCheck()) allowed = false;
-                    pieceBoard[1] = (1L << 60);
-                    if (allowed) output |= (1L << 58);
+                if (position[4] == 1 && ((pieceBoard[5] & (1L << 56)) != 0) && isEmpty(60) && isEmpty(59) && isEmpty(58)) {
+                    if ((opposingAttackMap & (1L << 59)) == 0 && (opposingAttackMap & (1L << 58)) == 0)
+                    output |= (1L << 58);
                 }
             }
         }
@@ -1353,7 +1344,7 @@ public class ChessProject {
         int origin = Long.numberOfTrailingZeros(checkingPieces);
         int checkingPiece = (checkStatus == 0) ? 0 : mailbox[origin];
         long friendlyPieces = occupiedSquares(position[0] == 1);
-        long basic = legalMovesBasic(square);
+        long basic = legalMovesBasic(square, opposingAttackMap);
         long out = basic & absolutePinRestrictions[square-1];
         if (checkStatus == 1) return out & buildCheckRay(origin + 1, mailbox[origin]);
         if (piece == 1 || piece == 2) return basic & (~opposingAttackMap);
@@ -1456,10 +1447,6 @@ public class ChessProject {
             //reward pawn moves close to promotion
             boolean farAdvanced = (pieceColor) ? getY(end) >= 6 : getY(end) <= 3;
             if (farAdvanced) cumulative += 20;
-            //punish pawn moves in front of king if it's not the endgame
-            int king = (pieceColor) ? 1 : 2;
-            if (piecePresent(king, translate(start, 0, -modifier)))
-            cumulative -= Math.round(20 * (1 - percentEndgame()));
         }
         if (piece == 5 || piece == 6) {
             if (getY(end) == ((pieceColor) ? 7 : 2)) cumulative += 25;
@@ -1467,29 +1454,26 @@ public class ChessProject {
         }
         return Math.round(cumulative * pieceModifier);
     }
-    static int generateTacticalMoves() {
+    static int generateTacticalMoves(long opposingAttackMap) {
         Arrays.fill(tacticalMoves, 0);
         long squares = occupiedSquares(position[0] == 1);
-        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
-        occupiedSquares(true) | occupiedSquares(false));
+        long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
+        long enemyPieces = occupiedSquares(position[0] == 0);
         long check = checkPieces();
-        if (Long.bitCount(check) > 1) Arrays.fill(absolutePinRestrictions, -1L);
+        if (check != 0) Arrays.fill(absolutePinRestrictions, -1L);
         else {
             int checkingPiece = (check == 0) ? 0 : mailbox[Long.numberOfTrailingZeros(check)];
-            long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
-            while (friendlyPieces != 0) {
-                int pieceSquare = Long.numberOfTrailingZeros(friendlyPieces);
+            while (enemyPieces != 0) {
+                int pieceSquare = Long.numberOfTrailingZeros(enemyPieces);
                 int pieceid = mailbox[pieceSquare];
-                pieceBoard[pieceid-1] ^= (1L << pieceSquare);
-                if (check != 0) pieceBoard[checkingPiece-1] ^= check;
-                long newCheckingPiece = checkPieces();
-                if (newCheckingPiece != 0) {
-                    int newSquare = Long.numberOfTrailingZeros(newCheckingPiece);
-                    absolutePinRestrictions[pieceSquare] = buildCheckRay(newSquare + 1, mailbox[newSquare]);
-                } else absolutePinRestrictions[pieceSquare] = -1L;
-                pieceBoard[pieceid-1] |= (1L << pieceSquare);
-                if (check != 0) pieceBoard[checkingPiece-1] |= check;
-                friendlyPieces &= (friendlyPieces - 1);
+                long fullVisionPotential = getBitboard(pieceSquare, enemyPieces, pieceid);
+                if (mailbox[pieceSquare] >= 3 && mailbox[pieceSquare] <= 8) {
+                    long intercepting = fullVisionPotential & friendlyPieces;
+                    if (Long.bitCount(intercepting) == 1)
+                    absolutePinRestrictions[Long.numberOfTrailingZeros(intercepting)] = (fullVisionPotential
+                    | (1L << pieceSquare)) & (~(pieceBoard[0] | pieceBoard[1]));
+                }
+                enemyPieces &= (enemyPieces - 1);
             }
         }
         int quantity = 0;
@@ -1506,29 +1490,26 @@ public class ChessProject {
         }
         return quantity;
     }
-    static int generateMoves() {
+    static int generateMoves(long opposingAttackMap) {
         Arrays.fill(legalMoveList, 0);
         long squares = occupiedSquares(position[0] == 1);
-        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
-        occupiedSquares(true) | occupiedSquares(false));
+        long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
+        long enemyPieces = occupiedSquares(position[0] == 0);
         long check = checkPieces();
-        if (Long.bitCount(check) > 1) Arrays.fill(absolutePinRestrictions, -1L);
+        if (check != 0) Arrays.fill(absolutePinRestrictions, -1L);
         else {
             int checkingPiece = (check == 0) ? 0 : mailbox[Long.numberOfTrailingZeros(check)];
-            long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
-            while (friendlyPieces != 0) {
-                int pieceSquare = Long.numberOfTrailingZeros(friendlyPieces);
+            while (enemyPieces != 0) {
+                int pieceSquare = Long.numberOfTrailingZeros(enemyPieces);
                 int pieceid = mailbox[pieceSquare];
-                pieceBoard[pieceid-1] ^= (1L << pieceSquare);
-                if (check != 0) pieceBoard[checkingPiece-1] ^= check;
-                long newCheckingPiece = checkPieces();
-                if (newCheckingPiece != 0) {
-                    int newSquare = Long.numberOfTrailingZeros(newCheckingPiece);
-                    absolutePinRestrictions[pieceSquare] = buildCheckRay(newSquare + 1, mailbox[newSquare]);
-                } else absolutePinRestrictions[pieceSquare] = -1L;
-                pieceBoard[pieceid-1] |= (1L << pieceSquare);
-                if (check != 0) pieceBoard[checkingPiece-1] |= check;
-                friendlyPieces &= (friendlyPieces - 1);
+                long fullVisionPotential = getBitboard(pieceSquare, enemyPieces, pieceid);
+                if (mailbox[pieceSquare] >= 3 && mailbox[pieceSquare] <= 8) {
+                    long intercepting = fullVisionPotential & friendlyPieces;
+                    if (Long.bitCount(intercepting) == 1)
+                    absolutePinRestrictions[Long.numberOfTrailingZeros(intercepting)] = (fullVisionPotential
+                    | (1L << pieceSquare)) & (~(pieceBoard[0] | pieceBoard[1]));
+                }
+                enemyPieces &= (enemyPieces - 1);
             }
         }
         int quantity = 0;
@@ -1545,6 +1526,7 @@ public class ChessProject {
         return quantity;
     }
     static void sortMoves(int quantity) {
+        float tacticalModifier = Math.min(activePieces(), 4) / 4.0f;
         for (int j = 0; j < quantity; j++) {
             int score = calculateScore(legalMoveList[j]);
             movesWithScores[j] = ((long) (~score) << 32) | (legalMoveList[j] & 0xffffffffL);
@@ -1672,16 +1654,16 @@ public class ChessProject {
         //if checked, consider all legal moves, if not, only consider tactical moves
         Arrays.fill(movesStorageQ[depth], 0);
         int quantity;
+        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
         if (inCheck()) {
-            quantity = generateMoves();
+            quantity = generateMoves(opposingAttackMap);
             sortMoves(quantity);
+            System.arraycopy(legalMoveList, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
-                makeMove(legalMoveList[i]);
-                System.arraycopy(legalMoveList, 0, movesStorageQ[depth], 0, quantity);
+                makeMove(movesStorageQ[depth][i]);
                 int potential;
                 potential = evalQ(alpha, beta, depth + 1);
                 restore();
-                System.arraycopy(movesStorageQ[depth], 0, legalMoveList, 0, quantity);
                 if (maximizing) {
                     best = Math.max(best, potential);
                     alpha = Math.max(alpha, best);
@@ -1692,14 +1674,13 @@ public class ChessProject {
                 if (alpha >= beta) break;
             }
         } else {
-            quantity = generateTacticalMoves();
+            quantity = generateTacticalMoves(opposingAttackMap);
+            System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
-                makeMove(tacticalMoves[i]);
-                System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
+                makeMove(movesStorageQ[depth][i]);
                 int potential;
                 potential = evalQ(alpha, beta, depth + 1);
                 restore();
-                System.arraycopy(movesStorageQ[depth], 0, tacticalMoves, 0, quantity);
                 if (maximizing) {
                     best = Math.max(best, potential);
                     alpha = Math.max(alpha, best);
@@ -1774,19 +1755,20 @@ public class ChessProject {
             }
         }
         if (depth == 0) return ((long)evalQ(alpha, beta, 0)) << 32;
+        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
         //aspiration window
-        int quantity = generateMoves();
+        int quantity = generateMoves(opposingAttackMap);
         if (quantity == 0) {
             if (inCheck()) return (position[0] == 1) ? Long.MIN_VALUE : leftBitsOnly;
             return 0;
         }
         sortMoves(quantity);
         Arrays.fill(movesStorage[depth - 1], 0);
+        System.arraycopy(legalMoveList, 0, movesStorage[depth - 1], 0, quantity);
         int evaluation = maximizing ? -8192 : 8191;
         int bestMove = 0;
         for (int i = 0; i < quantity; i++) {
-            makeMove(legalMoveList[i]);
-            System.arraycopy(legalMoveList, 0, movesStorage[depth - 1], 0, quantity);
+            makeMove(movesStorage[depth - 1][i]);
             int potential;
             //principal variation search
             //search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
@@ -1802,23 +1784,22 @@ public class ChessProject {
                 }
             }
             restore();
-            System.arraycopy(movesStorage[depth - 1], 0, legalMoveList, 0, quantity);
             if (maximizing) {
                 if (potential > evaluation) {
                     evaluation = potential;
-                    bestMove = legalMoveList[i];
+                    bestMove = movesStorage[depth - 1][i];
                 }
                 alpha = Math.max(alpha, evaluation);
             } else {
                 if (potential < evaluation) {
                     evaluation = potential;
-                    bestMove = legalMoveList[i];
+                    bestMove = movesStorage[depth - 1][i];
                 }
                 beta = Math.min(beta, evaluation);
             }
             if (alpha >= beta) {
-                if (!isTacticalMove(legalMoveList[i]))
-                storeQuietMove(legalMoveList[i], depth);
+                if (!isTacticalMove(movesStorage[depth - 1][i]))
+                storeQuietMove(movesStorage[depth - 1][i], depth);
                 break;
             }
         }
@@ -1934,6 +1915,7 @@ public class ChessProject {
         updateWhitePawnMetrics();
         updateBlackPawnMetrics();
         updateEvaluation(occupiedSquares(true) | occupiedSquares(false));
+        Arrays.fill(absolutePinRestrictions, -1L);
         System.out.print("Show stats? ");
         if (scanner.nextBoolean()) {
             display();
@@ -1941,7 +1923,7 @@ public class ChessProject {
         }
         long pieceSquares = occupiedSquares(position[0] == 1);
         if (!sufficientMaterial() || position[6] >= 100) return 6;
-        int quantity = generateMoves();
+        int quantity = generateMoves(getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false)));
         if (quantity == 0) return 6;
         System.out.print("Depth: ");
         maxDepth = scanner.nextInt();
