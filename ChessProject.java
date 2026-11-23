@@ -470,6 +470,10 @@ public class ChessProject {
         }
         float subtotal = activePiecesModifier * tacticalOutput
         + (1 - activePiecesModifier) * nontacticalOutput+ materialDifferential * materialModifier;
+        for (int i = 0; i < 8; i++) {
+            whitePawnFiles[i] = (pieceBoard[10] & fileref[i]) != 0;
+            blackPawnFiles[i] = (pieceBoard[11] & fileref[i]) != 0;
+        }
         long whitePassers = passedPawns(1);
         long whiteCandidates = passedPawns(2);
         long whiteHelpers = passedPawns(3);
@@ -1703,10 +1707,6 @@ public class ChessProject {
         1 = white passed pawns, 2 = black passed pawns, 3 = white passer candidates,
         4 = black passer candidates, 5 = white helpers, 6 = black helpers
         */
-        for (int i = 0; i < 8; i++) {
-            whitePawnFiles[i] = (pieceBoard[10] & fileref[i]) != 0;
-            blackPawnFiles[i] = (pieceBoard[11] & fileref[i]) != 0;
-        }
         long output = 0L;
         int helpingNeighbors = 0, opposingNeighbors = 0;
         for (int i = 0; i < 8; i++) {
