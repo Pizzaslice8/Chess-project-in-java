@@ -2037,9 +2037,13 @@ public class ChessProject {
 
         int i = 0, element = 1, row = 8, column = 1;
         char current = fen[i];
-        while (current != '\0') {
+        do {
             if (current == ' ') {
                 element++;
+                current = fen[++i];
+                continue;
+            }
+            if (current == '\0') {
                 current = fen[++i];
                 continue;
             }
@@ -2107,7 +2111,7 @@ public class ChessProject {
                 default: break;
             }
             current = fen[++i];
-        }
+        } while (current != '\0');
         updateWhitePawnMetrics();
         updateBlackPawnMetrics();
         updateEvaluation(occupiedSquares(true) | occupiedSquares(false));
