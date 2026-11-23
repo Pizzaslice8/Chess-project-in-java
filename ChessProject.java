@@ -1517,10 +1517,20 @@ public class ChessProject {
         return out;
     }
     static boolean inCheck() {
-        long kingBit = pieceBoard[1 - position[0]];
-        long attackMap = getCompositeBitboard(occupiedSquares(position[0] == 0),
-        occupiedSquares(true) | occupiedSquares(false));
-        return (kingBit & attackMap) != 0;
+        int kingSquare = Long.numberOfTrailingZeros(pieceBoard[1 - position[0]]);
+        long pieces = occupiedSquares(true) | occupiedSquares(false);
+        if (position[0] == 1) {
+            if ((getBitboard(kingSquare, pieces, 6) & (pieceBoard[5] | pieceBoard[3])) != 0) return true;
+            if ((getBitboard(kingSquare, pieces, 8) & (pieceBoard[7] | pieceBoard[3])) != 0) return true;
+            if ((getBitboard(kingSquare, pieces, 10) & pieceBoard[9]) != 0) return true;
+            if ((getBitboard(kingSquare, pieces, 11) & pieceBoard[11]) != 0) return true;
+        } else {
+            if ((getBitboard(kingSquare, pieces, 5) & (pieceBoard[4] | pieceBoard[2])) != 0) return true;
+            if ((getBitboard(kingSquare, pieces, 7) & (pieceBoard[6] | pieceBoard[2])) != 0) return true;
+            if ((getBitboard(kingSquare, pieces, 9) & pieceBoard[8]) != 0) return true;
+            if ((getBitboard(kingSquare, pieces, 12) & pieceBoard[10]) != 0) return true;
+        }
+        return false;
     }
     static long checkPieces() {
         //returns checking pieces
