@@ -87,6 +87,7 @@ public class ChessProject {
         4.94975f, 4.30116f, 3.80789f, 3.53553f, 3.53553f, 3.80789f, 4.30116f, 4.94975f
     };
     static float[][] distanceBetweenSquares = new float[64][64];
+    static int[][] translateSquare = new int[64][8];
     static final long[] rankref = {
         0xffL,
         0xff00L,
@@ -680,24 +681,24 @@ public class ChessProject {
             case 7:
                 pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
                 if ((square == 36 || square == 37) && ((1L << (square - 1)) & blackHoles) != 0) {
-                    if (piecePresent(11, translate(square, 1, -1))
-                    || piecePresent(11, translate(square, -1, -1)))
+                    if (piecePresent(11, translateSquare[square-1][7])
+                    || piecePresent(11, translateSquare[square-1][5]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 4 : 2;
                 }
                 break;
             case 8:
                 pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
                 if ((square == 28 || square == 29) && ((1L << (square - 1)) & whiteHoles) != 0) {
-                    if (piecePresent(12, translate(square, 1, 1))
-                    || piecePresent(12, translate(square, -1, 1)))
+                    if (piecePresent(12, translateSquare[square-1][1])
+                    || piecePresent(12, translateSquare[square-1][3]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -4 : -2;
                 }
                 break;
             case 9:
                 pieceActivity[square-1] = modifier * knightBonus[square-1];
                 if (((1L << (square - 1)) & blackHoles) != 0) {
-                    if (piecePresent(11, translate(square, 1, -1))
-                    || piecePresent(11, translate(square, -1, -1)))
+                    if (piecePresent(11, translateSquare[square-1][7])
+                    || piecePresent(11, translateSquare[square-1][5]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 10 : 5;
                     else outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 5 : 3;
                 }
@@ -707,8 +708,8 @@ public class ChessProject {
                 int equivalent = getX(square) + 8 * (equivalentY - 1);
                 pieceActivity[square-1] = modifier * knightBonus[equivalent-1];
                 if (((1L << (square - 1)) & whiteHoles) != 0) {
-                    if (piecePresent(12, translate(square, 1, 1))
-                    || piecePresent(12, translate(square, -1, 1)))
+                    if (piecePresent(12, translateSquare[square-1][1])
+                    || piecePresent(12, translateSquare[square-1][3]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -10 : -5;
                     else outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -5 : -3;
                 }
@@ -929,54 +930,54 @@ public class ChessProject {
         long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (piece == 11) {
             //pawn
-            int candidate = translate(square, 1, 1);
+            int candidate = translateSquare[square-1][1];
             int occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
             if (candidate != 0 && occupied != 0 && color(occupied) != color && occupied != 2) {
                 output |= (1L << (candidate-1));
             }
-            candidate = translate(square, -1, 1);
+            candidate = translateSquare[square-1][3];
             occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
             if (candidate != 0 && occupied != 0 && color(occupied) != color && occupied != 2) {
                 output |= (1L << (candidate-1));
             }
-            candidate = translate(square, 0, 1);
+            candidate = translateSquare[square-1][2];
             occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
             if (candidate != 0 && occupied == 0) {
                 output |= (1L << (candidate-1));
-                candidate = translate(square, 0, 2);
+                candidate = translateSquare[candidate-1][2];
                 occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
                 if (candidate != 0 && occupied == 0 && square > 8 && square <= 16) {
                     output |= (1L << (candidate-1));
                 }
             }
             if (position[5] != 0 && (pieces & (1L << (position[5]-1))) == 0 &&
-                    (position[5] == translate(square, 1, 1) || position[5] == translate(square, -1, 1))) {
+                    (position[5] == translateSquare[square-1][1] || position[5] == translateSquare[square-1][3])) {
                 output |= (1L << (position[5]-1));
             }
         } else if (piece == 12) {
             //pawn
-            int candidate = translate(square, 1, -1);
+            int candidate = translateSquare[square-1][7];
             int occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
             if (candidate != 0 && occupied != 0 && color(occupied) != color && occupied != 1) {
                 output |= (1L << (candidate-1));
             }
-            candidate = translate(square, -1, -1);
+            candidate = translateSquare[square-1][5];
             occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
             if (candidate != 0 && occupied != 0 && color(occupied) != color && occupied != 1) {
                 output |= (1L << (candidate-1));
             }
-            candidate = translate(square, 0, -1);
+            candidate = translateSquare[square-1][6];
             occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
             if (candidate != 0 && occupied == 0) {
                 output |= (1L << (candidate-1));
-                candidate = translate(square, 0, -2);
+                candidate = translateSquare[candidate-1][6];
                 occupied = (candidate == 0) ? 0 : mailbox[candidate-1];
                 if (occupied == 0 && square > 48 && square <= 56) {
                     output |= (1L << (candidate-1));
                 }
             }
             if (position[5] != 0 && (pieces & (1L << (position[5]-1))) == 0 &&
-                    (position[5] == translate(square, 1, -1) || position[5] == translate(square, -1, -1))) {
+                    (position[5] == translateSquare[square-1][7] || position[5] == translateSquare[square-1][5])) {
                 output |= (1L << (position[5]-1));
             }
         } else {
@@ -1142,7 +1143,7 @@ public class ChessProject {
                 //worry about en passant and promotion, assume all promotions go to queens
                 if (end == position[5]) {
                     //en passant!
-                    int squareid = translate(end, 0, -1) - 1;
+                    int squareid = translateSquare[end-1][6] - 1;
                     pieceBoard[11] ^= (1L << squareid);
                     mailbox[squareid] = 0;
                     currentZobrist ^= zobrist[squareid][11];
@@ -1153,8 +1154,8 @@ public class ChessProject {
                 }
                 if (start > 8 && start <= 16 && end > 24 && end <= 32) {
                     //pawn move 2 squares, check for en passant
-                    if (piecePresent(12, translate(end, 1, 0)) || piecePresent(12, translate(end, -1, 0))) {
-                        position[5] = translate(start, 0, 1);
+                    if (piecePresent(12, translateSquare[end-1][0]) || piecePresent(12, translateSquare[end-1][4])) {
+                        position[5] = translateSquare[start-1][2];
                         currentZobrist ^= zobrist[position[5]-1][12];
                     }
                 }
@@ -1172,7 +1173,7 @@ public class ChessProject {
                 //black pawn
                 if (end == position[5]) {
                     //en passant!
-                    int squareid = translate(end, 0, 1) - 1;
+                    int squareid = translateSquare[end-1][2] - 1;
                     pieceBoard[10] ^= (1L << squareid);
                     mailbox[squareid] = 0;
                     currentZobrist ^= zobrist[squareid][10];
@@ -1183,8 +1184,8 @@ public class ChessProject {
                 }
                 if (start > 48 && start <= 56 && end > 32 && end <= 40) {
                     //pawn move 2 squares, check for en passant
-                    if (piecePresent(11, translate(end, 1, 0)) || piecePresent(11, translate(end, -1, 0))) {
-                        position[5] = translate(start, 0, -1);
+                    if (piecePresent(11, translateSquare[end-1][0]) || piecePresent(11, translateSquare[end-1][4])) {
+                        position[5] = translateSquare[start-1][6];
                         currentZobrist ^= zobrist[position[5]-1][12];
                     }
                 }
@@ -1994,6 +1995,14 @@ public class ChessProject {
                 int y2 = getY(j+1);
                 distanceBetweenSquares[i][j] = (float) Math.hypot(x2 - x1, y2 - y1);
             }
+            translateSquare[i][0] = translate(i+1, 1, 0);
+            translateSquare[i][1] = translate(i+1, 1, 1);
+            translateSquare[i][2] = translate(i+1, 0, 1);
+            translateSquare[i][3] = translate(i+1, -1, 1);
+            translateSquare[i][4] = translate(i+1, -1, 0);
+            translateSquare[i][5] = translate(i+1, -1, -1);
+            translateSquare[i][6] = translate(i+1, 0, -1);
+            translateSquare[i][7] = translate(i+1, 1, -1);
             //zobrist
             for (int j = 0; j < 13; j++) zobrist[i][j] = generator.nextLong();
         }
