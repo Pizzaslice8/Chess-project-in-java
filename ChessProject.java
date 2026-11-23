@@ -86,6 +86,7 @@ public class ChessProject {
         4.30116f, 3.53553f, 2.91548f, 2.54951f, 2.54951f, 2.91548f, 3.53553f, 4.30116f, 
         4.94975f, 4.30116f, 3.80789f, 3.53553f, 3.53553f, 3.80789f, 4.30116f, 4.94975f
     };
+    static float[][] distanceBetweenSquares = new float[64][64];
     static final long[] rankref = {
         0xffL,
         0xff00L,
@@ -645,12 +646,12 @@ public class ChessProject {
                     int squareid = Long.numberOfTrailingZeros(enemyPiecesClose);
                     int newPiece = mailbox[squareid];
                     int worth = Math.abs(materialWorth(newPiece));
-                    float dangerFactor = (float) Math.hypot(getX(squareid + 1) - x, getY(squareid + 1) - y); //higher = less danger, lower = more danger
+                    float dangerFactor = distanceBetweenSquares[square-1][squareid]; //higher = less danger, lower = more danger
                     long thatPieceVision = getBitboard(squareid, occupied, newPiece);
                     while (thatPieceVision != 0) {
-                        int squareSeen = Long.numberOfTrailingZeros(thatPieceVision) + 1;
+                        int squareSeen = Long.numberOfTrailingZeros(thatPieceVision);
                         //factor in how far away  squareSeen is to the king and how powerful the seeing piece is
-                        dangerFactor *= Math.hypot(getX(squareSeen) - x, getY(squareSeen) - y);
+                        dangerFactor *= distanceBetweenSquares[square-1][squareSeen];
                         if (dangerFactor != 0) safety -= worth / dangerFactor;
                         thatPieceVision &= (thatPieceVision - 1);
                     }
@@ -1986,6 +1987,13 @@ public class ChessProject {
             for (int index = 0; index < bishopAddition.length; index++) bishopAddition[index] = fillWithBishop(i, expand(index, bishopVision[i]));
             rookAttacks[i] = rookAddition;
             bishopAttacks[i] = bishopAddition;
+            for (int j = 0; j < 64; j++) {
+                int x1 = getX(i+1);
+                int y1 = getY(i+1);
+                int x2 = getX(j+1);
+                int y2 = getY(j+1);
+                distanceBetweenSquares[i][j] = (float) Math.hypot(x2 - x1, y2 - y1);
+            }
             //zobrist
             for (int j = 0; j < 13; j++) zobrist[i][j] = generator.nextLong();
         }
