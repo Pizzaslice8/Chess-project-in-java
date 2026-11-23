@@ -1787,7 +1787,6 @@ public class ChessProject {
             }
         }
         //if checked, consider all legal moves, if not, only consider tactical moves
-        Arrays.fill(movesStorageQ[depth], 0);
         int quantity;
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
         if (inCheck()) {
@@ -1795,6 +1794,7 @@ public class ChessProject {
             sortMoves(quantity);
             System.arraycopy(legalMoveList, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
+                if (movesStorageQ[depth][i] == 0) break;
                 int move = movesStorageQ[depth][i];
                 int movedPiece = mailbox[extractStart(move) - 1];
                 int captured = mailbox[extractEnd(move) - 1];
@@ -1823,6 +1823,7 @@ public class ChessProject {
             quantity = generateTacticalMoves(opposingAttackMap);
             System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
+                if (movesStorageQ[depth][i] == 0) break;
                 int move = movesStorageQ[depth][i];
                 int movedPiece = mailbox[extractStart(move) - 1];
                 int captured = mailbox[extractEnd(move) - 1];
@@ -1920,11 +1921,11 @@ public class ChessProject {
             return 0;
         }
         sortMoves(quantity);
-        Arrays.fill(movesStorage[depth - 1], 0);
         System.arraycopy(legalMoveList, 0, movesStorage[depth - 1], 0, quantity);
         int evaluation = maximizing ? -8192 : 8191;
         int bestMove = 0;
         for (int i = 0; i < quantity; i++) {
+            if (movesStorage[depth - 1][i] == 0) break;
             int move = movesStorage[depth - 1][i];
             int movedPiece = mailbox[extractStart(move) - 1];
             int captured = mailbox[extractEnd(move) - 1];
