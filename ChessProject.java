@@ -38,7 +38,6 @@ public class ChessProject {
     static long controlledByWhitePawns = 0L, controlledByBlackPawns = 0L;
     static int maxDepth;
     //move ordering heuristics
-    static int slot = 0;
     static boolean[] killerMoves = new boolean[4096];
     static int[] history = new int[4096];
     static int historyStored = 0;
@@ -1865,6 +1864,7 @@ public class ChessProject {
     }
     static long evalDepth(int depth, int alpha, int beta, long previousResult) {
         if (previousResult != baseLeftBit && depth == maxDepth) {
+            //aspiration window
             int evalOnly = (int)(previousResult >> 32);
             int lower = (evalOnly > -8192) ? evalOnly - 50 : -8192;
             //in case previousResult[0] is less than 50 away from -8192
@@ -1926,7 +1926,6 @@ public class ChessProject {
         }
         if (depth == 0) return ((long)evalQ(alpha, beta, 0)) << 32;
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
-        //aspiration window
         int quantity = generateMoves(opposingAttackMap);
         if (quantity == 0) {
             if (inCheck()) return (position[0] == 1) ? Long.MIN_VALUE : leftBitsOnly;
@@ -1951,7 +1950,7 @@ public class ChessProject {
             makeMove(move);
             int potential;
             //principal variation search
-            //search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
+            //late move reductions, search the first move fully, then search subsequent moves with zero window and do a full search if it performs well
             if (i == 0) {
                 potential = (int)(evalDepth(depth - 1, alpha, beta, baseLeftBit) >> 32);
             } else {
