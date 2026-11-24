@@ -22,6 +22,7 @@ public class ChessProject {
     static int[] legalMoveList = new int[218]; //most number of legal moves in a position is 218
     static int[] tacticalMoves = new int[218];
     static long[] movesWithScores = new long[218];
+    static long[] tacticalMovesWithScores = new long[218];
     static long[] moveBoards = new long[64];
     static long[] absolutePinRestrictions = new long[64];
     static boolean[] whitePawnFiles = new boolean[8];
@@ -1698,6 +1699,22 @@ public class ChessProject {
         Arrays.sort(movesWithScores, 0, quantity);
         for (int j = 0; j < quantity; j++) legalMoveList[j] = (int) movesWithScores[j];
     }
+    static void sortTacticalMoves(int quantity) {
+        for (int i = 0; i < quantity; i++) {
+            int move = tacticalMoves[i];
+            int start = extractStart(move);
+            int end = extractEnd(move);
+            int piece = mailbox[start-1];
+            int captured = mailbox[end-1];
+            int materialGain = (captured == 0) ? 0 : Math.abs(materialWorth(captured));
+            materialGain -= (piece == 1 || piece == 2) ? 180 : Math.abs(materialWorth(piece));
+            if ((piece == 11 && end >= 57) || (piece == 12 && end <= 8)) materialGain += 80;
+            materialGain += 180;
+            tacticalMovesWithScores[i] = ((long) (~materialGain) << 32) | (move & 0xffffffffL);
+        }
+        Arrays.sort(tacticalMovesWithScores, 0, quantity);
+        for (int i = 0; i < quantity; i++) tacticalMoves[i] = (int) tacticalMovesWithScores[i];
+    }
     static boolean isTacticalMove(int move) {
         int start = extractStart(move);
         int end = extractEnd(move);
@@ -1845,6 +1862,7 @@ public class ChessProject {
             }
         } else {
             quantity = generateTacticalMoves(opposingAttackMap);
+            sortTacticalMoves(quantity);
             System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
                 if (movesStorageQ[depth][i] == 0) break;
