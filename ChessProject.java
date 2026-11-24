@@ -1496,21 +1496,33 @@ public class ChessProject {
                 pieceBoard[10] ^= 1L << (square-1);
                 pieceBoard[10] |= 1L << (position[5]-1);
                 pieceBoard[11] ^= 1L << (position[5]-9);
+                mailbox[square-1] = 0;
+                mailbox[position[5]-1] = 11;
+                mailbox[position[5]-9] = 0;
                 if (inCheck()) out &= (~(1L << (position[5]-1)));
                 else out |= 1L << (position[5]-1);
                 pieceBoard[10] |= 1L << (square-1);
                 pieceBoard[10] ^= 1L << (position[5]-1);
                 pieceBoard[11] |= 1L << (position[5]-9);
+                mailbox[square-1] = 11;
+                mailbox[position[5]-1] = 0;
+                mailbox[position[5]-9] = 12;
             }
             if (piece == 12) {
                 pieceBoard[11] ^= 1L << (square-1);
                 pieceBoard[11] |= 1L << (position[5]-1);
                 pieceBoard[10] ^= 1L << (position[5]+7);
+                mailbox[square-1] = 0;
+                mailbox[position[5]-1] = 12;
+                mailbox[position[5]+7] = 0;
                 if (inCheck()) out &= (~(1L << (position[5]-1)));
                 else out |= 1L << (position[5]-1);
                 pieceBoard[11] |= 1L << (square-1);
                 pieceBoard[11] ^= 1L << (position[5]-1);
                 pieceBoard[10] |= 1L << (position[5]+7);
+                mailbox[square-1] = 12;
+                mailbox[position[5]-1] = 0;
+                mailbox[position[5]+7] = 11;
             }
         }
         return out;
