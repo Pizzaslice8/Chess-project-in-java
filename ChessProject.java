@@ -2085,9 +2085,9 @@ public class ChessProject {
                 case 4:
                     switch (current) {
                         case '-': break;
-                        case 'a': case 'b': case 'c':
-                        case 'd': case 'e': case 'f':
-                            position[5] += (int)(current - '`');
+                        case 'a': case 'b': case 'c': case 'd':
+                        case 'e': case 'f': case 'g': case 'h':
+                            position[5] = (int)(current - '`');
                             current = fen[++i];
                             if (current == '3') position[5] += 16;
                             else if (current == '6') position[5] += 40;
@@ -2104,7 +2104,8 @@ public class ChessProject {
                         position[6] = (int)(current - '0');
                         position[6] *= 10;
                         current = fen[++i];
-                        position[6] += (int)(current - '0');
+                        if (fen[i+1] == ' ') position[6] += (int)(current - '0');
+                        else return 6; //triple digit halfmove counter means the game is already over
                     }
                     break;
                 default: break;
