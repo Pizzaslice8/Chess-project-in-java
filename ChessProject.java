@@ -524,11 +524,12 @@ public class ChessProject {
             if (blackPawnStack == 2) subtotal += 3;
             else if (blackPawnStack >= 3) subtotal += 7;
         }
-        long whitePawnsToConsider = pieceBoard[10] & 0x3c3c000000L;
-        long blackPawnsToConsider = pieceBoard[11] & 0x3c3c000000L;
+        long whitePawnsToConsider = pieceBoard[10] & 0x3c3c3c3c0000L;
+        long blackPawnsToConsider = pieceBoard[11] & 0x3c3c3c3c0000L;
         while (whitePawnsToConsider != 0) {
             int square = Long.numberOfTrailingZeros(whitePawnsToConsider) + 1;
             int file = getX(square);
+            //will NEVER throw array index out of bounds exception because only central files are considered
             if ((pieceBoard[10] & fileref[file]) == 0 && (pieceBoard[10] & fileref[file-2]) == 0) {
                 if ((pieceBoard[9] & (1L << (square + 7))) == 0) subtotal -= 5;
                 else subtotal -= 2;
@@ -1706,7 +1707,7 @@ public class ChessProject {
     }
     static boolean sufficientMaterial() {
         int whiteKnights = Long.bitCount(pieceBoard[8]), blackKnights = Long.bitCount(pieceBoard[9]),
-        whitePieces = Long.bitCount(occupiedSquares(true)), blackPieces = Long.bitCount(occupiedSquares(false));
+        whitePieces = Long.bitCount(occupiedSquares(true) ^ pieceBoard[0]), blackPieces = Long.bitCount(occupiedSquares(false) ^ pieceBoard[1]);
         if ((pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[10] | pieceBoard[11]) != 0) return true;
         if (whitePieces == 2 && whiteKnights < 2) return true;
         if (blackPieces == 2 && blackKnights < 2) return true;
