@@ -1928,7 +1928,7 @@ public class ChessProject {
         long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
         int quantity = generateMoves(opposingAttackMap);
         if (quantity == 0) {
-            if (inCheck()) return (position[0] == 1) ? Long.MIN_VALUE : leftBitsOnly;
+            if (inCheck()) return (position[0] == 1) ? (-8000 << 32) : (8000 << 32);
             return 0;
         }
         sortMoves(quantity);
