@@ -310,11 +310,11 @@ public class ChessProject {
     }
     static int occupancyIndexRook(int squareid, long occupancy) {
         long before = (occupancy & rookVision[squareid]) * rookMagic[squareid];
-        return (int) (before >>> Long.numberOfTrailingZeros(before));
+        return (int) (before >>> (64 - Long.bitCount(rookVision[squareid])));
     }
     static int occupancyIndexBishop(int squareid, long occupancy) {
         long before = (occupancy & bishopVision[squareid]) * bishopMagic[squareid];
-        return (int) (before >>> Long.numberOfTrailingZeros(before));
+        return (int) (before >>> (64 - Long.bitCount(bishopVision[squareid])));
     }
     static long expand(long occupancy, long mask) {
         //Long.compress and Long.expand don't exist on some mobile apps for java
