@@ -2071,7 +2071,7 @@ public class ChessProject {
         store(evaluation, bestMove, depth, bound);
         return (((long) evaluation) << 32) | bestMove;
     }
-    static int run() {
+    public static void main(String[] args) {
         System.out.print("Initializing... ");
         Random generator = new Random(-0x382E4DFBA50BC32FL);
         for (int i = 0; i < 64; i++) {
@@ -2146,7 +2146,10 @@ public class ChessProject {
                         column += (int)(current - '0');
                     } else {
                         int id = getId(current);
-                        if (id == 0) return 1;
+                        if (id == 0) {
+                            System.out.println("Invalid FEN element 1");
+                            return;
+                        }
                         int square = (row - 1) * 8 + column;
                         mailbox[square-1] = (byte) id;
                         pieceBoard[id-1] |= (1L << (square-1));
@@ -2161,7 +2164,10 @@ public class ChessProject {
                     } else if (current == 'b') {
                         position[0] = 0;
                         currentZobrist ^= blackToMove;
-                    } else return 2;
+                    } else {
+                        System.out.println("Invalid FEN element 2");
+                        return;
+                    }
                     break;
                 case 3:
                     switch (current) {
@@ -2170,7 +2176,7 @@ public class ChessProject {
                         case 'Q': position[2] = 1; currentZobrist ^= zobristWCL; break;
                         case 'k': position[3] = 1; currentZobrist ^= zobristBCS; break;
                         case 'q': position[4] = 1; currentZobrist ^= zobristBCL; break;
-                        default: return 3;
+                        default: System.out.println("Invalid FEN element 3"); return;
                     }
                     break;
                 case 4:
@@ -2182,21 +2188,31 @@ public class ChessProject {
                             current = fen[++i];
                             if (current == '3') position[5] += 16;
                             else if (current == '6') position[5] += 40;
-                            else return 4;
+                            else {
+                                System.out.println("Invalid FEN element 4");
+                                return;
+                            }
                             currentZobrist ^= zobrist[position[5]-1][12];
                             break;
-                        default: return 4;
+                        default: System.out.println("Invalid FEN element 4"); return;
                     }
                     break;
                 case 5:
-                    if (!Character.isDigit(current)) return 5;
+                    if (!Character.isDigit(current)) {
+                        System.out.println("Invalid FEN element 5");
+                        return;
+                    }
                     if (fen[i+1] == ' ') position[6] = (int)(current - '0');
                     else {
                         position[6] = (int)(current - '0');
                         position[6] *= 10;
                         current = fen[++i];
                         if (fen[i+1] == ' ') position[6] += (int)(current - '0');
-                        else return 6; //triple digit halfmove counter means the game is already over
+                        else {
+                            //triple digit halfmove counter means the game is already over
+                            System.out.println("Game already over by 50 move rule");
+                            return;
+                        } 
                     }
                     break;
                 default: break;
@@ -2215,9 +2231,15 @@ public class ChessProject {
             display();
             displayStats();    
         }
-        if (!sufficientMaterial() || position[6] >= 100) return 6;
+        if (!sufficientMaterial()) {
+            System.out.println("Game already over by insufficient material");
+            return;
+        }
         int quantity = generateMoves();
-        if (quantity == 0) return 6;
+        if (quantity == 0) {
+            System.out.println("Game already over");
+            return;
+        }
         System.out.print("Depth: ");
         maxDepth = scanner.nextInt();
         long lastCompleted = baseLeftBit;
@@ -2251,30 +2273,6 @@ public class ChessProject {
                 System.out.printf("Total nodes searched: %d\n", nodes);
                 System.out.printf("Nodes per second: %f\n\n", (nodes / timeTaken));
             }
-        }
-        return 0;
-    }
-    public static void main(String[] args) {
-        int result = run();
-        switch (result) {
-            case 1:
-                System.out.println("\u001b[31mnonexistent piece character\u001b[0m");
-                break;
-            case 2:
-                System.out.println("\u001b[31mFEN element 2 can only be \'w\' or \'b\'\u001b[0m");
-                break;
-            case 3:
-                System.out.println("\u001b[31mFEN element 3 can only consist of \'-\', \'K\', \'Q\', \'k\', or \'q\'\u001b[0m");
-                break;
-            case 4:
-                System.out.println("\u001b[31mFEN element 4 can only consist of \'-\'or squares on the 3rd or 6th rank\u001b[0m");
-                break;
-            case 5:
-                System.out.println("\u001b[31mFEN element 5 needs to be a number\u001b[0m");
-                break;
-            case 6:
-                System.out.println("\u001b[31mGame is already over\u001b[0m");
-            default: break;
         }
     }
 }
