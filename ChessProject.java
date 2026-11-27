@@ -279,7 +279,7 @@ public class ChessProject {
     static long expand(long occupancy, long mask) {
         long m0 = mask;
         long mk = ~mask << 1;
-        Arrays.fill(expandTemplate, 0);
+        Arrays.fill(expandTemplate, 0L);
 
         for (int i = 0; i < 6; i++) {
             long mp = mk ^ (mk << 1);
@@ -1615,7 +1615,6 @@ public class ChessProject {
         return Math.round(cumulative * pieceModifier);
     }
     static int generateTacticalMoves(long opposingAttackMap) {
-        Arrays.fill(tacticalMoves, 0);
         long squares = occupiedSquares(position[0] == 1);
         long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
         long enemyPieces = occupiedSquares(position[0] == 0);
@@ -1650,7 +1649,6 @@ public class ChessProject {
         return quantity;
     }
     static int generateMoves(long opposingAttackMap) {
-        Arrays.fill(legalMoveList, 0);
         long squares = occupiedSquares(position[0] == 1);
         long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
         long enemyPieces = occupiedSquares(position[0] == 0);
@@ -1695,6 +1693,7 @@ public class ChessProject {
             int score = calculateScore(legalMoveList[j]);
             movesWithScores[j] = ((long) (~score) << 32) | (legalMoveList[j] & 0xffffffffL);
         }
+        //Insertion sorting is NOT FASTER, I tried
         Arrays.sort(movesWithScores, 0, quantity);
         for (int j = 0; j < quantity; j++) legalMoveList[j] = (int) movesWithScores[j];
     }
