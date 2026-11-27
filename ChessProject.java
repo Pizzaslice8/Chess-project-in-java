@@ -34,7 +34,6 @@ public class ChessProject {
     static long currentZobrist;
     static long[] pieceBoard = new long[12];
     static byte[] mailbox = new byte[64];
-    static long whiteHoles = 0L, blackHoles = 0L;
     static long controlledByWhitePawns = 0L, controlledByBlackPawns = 0L;
     static int maxDepth;
     //move ordering heuristics
@@ -49,6 +48,8 @@ public class ChessProject {
     static int[] pieceActivity = new int[64], material = new int[64], centralControl = new int[64],
     kingSafety = new int[64], space = new int[64], rooksSeventh = new int[64], outposts = new int[64];
     //misc.
+    static long[] whiteHoleRef = new long[65536];
+    static long[] blackHoleRef = new long[65536];
     static long[] expandTemplate = new long[6];
     static final int[] bishopDx = {1, 1, -1, -1};
     static final int[] bishopDy = {-1, 1, 1, -1};
@@ -566,50 +567,52 @@ public class ChessProject {
         }
         return reallyActive;
     }
-    static void updateWhitePawnMetrics() {
+    static long getWhiteHoles(long whitePawns) {
         //en passant doesn't affect holes
-        whiteHoles = 0L;
+        long whiteHoles = 0L;
         //third rank holes
-        if ((pieceBoard[10] & 0x200L) == 0) whiteHoles |= 0x10000L;
-        if ((pieceBoard[10] & 0x500L) == 0) whiteHoles |= 0x20000L;
-        if ((pieceBoard[10] & 0xa00L) == 0) whiteHoles |= 0x40000L;
-        if ((pieceBoard[10] & 0x1400L) == 0) whiteHoles |= 0x80000L;
-        if ((pieceBoard[10] & 0x2800L) == 0) whiteHoles |= 0x100000L;
-        if ((pieceBoard[10] & 0x5000L) == 0) whiteHoles |= 0x200000L;
-        if ((pieceBoard[10] & 0xa000L) == 0) whiteHoles |= 0x400000L;
-        if ((pieceBoard[10] & 0x4000L) == 0) whiteHoles |= 0x800000L;
+        if ((whitePawns & 0x200L) == 0) whiteHoles |= 0x10000L;
+        if ((whitePawns & 0x500L) == 0) whiteHoles |= 0x20000L;
+        if ((whitePawns & 0xa00L) == 0) whiteHoles |= 0x40000L;
+        if ((whitePawns & 0x1400L) == 0) whiteHoles |= 0x80000L;
+        if ((whitePawns & 0x2800L) == 0) whiteHoles |= 0x100000L;
+        if ((whitePawns & 0x5000L) == 0) whiteHoles |= 0x200000L;
+        if ((whitePawns & 0xa000L) == 0) whiteHoles |= 0x400000L;
+        if ((whitePawns & 0x4000L) == 0) whiteHoles |= 0x800000L;
         //fourth rank holes
-        if ((pieceBoard[10] & 0x20200L) == 0) whiteHoles |= 0x1000000L;
+        if ((whitePawns & 0x20200L) == 0) whiteHoles |= 0x1000000L;
         //pawn on b2 still has the POTENTIAL to control a4, even if it doesn't right now
         //a hole is a square that can't ever be controlled by a pawn without pawn-captures
-        if ((pieceBoard[10] & 0x50500L) == 0) whiteHoles |= 0x2000000L;
-        if ((pieceBoard[10] & 0xa0a00L) == 0) whiteHoles |= 0x4000000L;
-        if ((pieceBoard[10] & 0x1414000L) == 0) whiteHoles |= 0x8000000L;
-        if ((pieceBoard[10] & 0x2828000L) == 0) whiteHoles |= 0x10000000L;
-        if ((pieceBoard[10] & 0x5050000L) == 0) whiteHoles |= 0x20000000L;
-        if ((pieceBoard[10] & 0xa0a0000L) == 0) whiteHoles |= 0x40000000L;
-        if ((pieceBoard[10] & 0x4040000L) == 0) whiteHoles |= 0x80000000L;
+        if ((whitePawns & 0x50500L) == 0) whiteHoles |= 0x2000000L;
+        if ((whitePawns & 0xa0a00L) == 0) whiteHoles |= 0x4000000L;
+        if ((whitePawns & 0x1414000L) == 0) whiteHoles |= 0x8000000L;
+        if ((whitePawns & 0x2828000L) == 0) whiteHoles |= 0x10000000L;
+        if ((whitePawns & 0x5050000L) == 0) whiteHoles |= 0x20000000L;
+        if ((whitePawns & 0xa0a0000L) == 0) whiteHoles |= 0x40000000L;
+        if ((whitePawns & 0x4040000L) == 0) whiteHoles |= 0x80000000L;
+        return whiteHoles;
     }
-    static void updateBlackPawnMetrics() {
-        blackHoles = 0L;
+    static long getBlackHoles(long blackPawns) {
+        long blackHoles = 0L;
         //third rank holes
-        if ((pieceBoard[11] & 0x2000000000000L) == 0) blackHoles |= 0x10000000000L;
-        if ((pieceBoard[11] & 0x5000000000000L) == 0) blackHoles |= 0x20000000000L;
-        if ((pieceBoard[11] & 0xa000000000000L) == 0) blackHoles |= 0x40000000000L;
-        if ((pieceBoard[11] & 0x14000000000000L) == 0) blackHoles |= 0x80000000000L;
-        if ((pieceBoard[11] & 0x28000000000000L) == 0) blackHoles |= 0x100000000000L;
-        if ((pieceBoard[11] & 0x50000000000000L) == 0) blackHoles |= 0x200000000000L;
-        if ((pieceBoard[11] & 0xa0000000000000L) == 0) blackHoles |= 0x400000000000L;
-        if ((pieceBoard[11] & 0x40000000000000L) == 0) blackHoles |= 0x800000000000L;
+        if ((blackPawns & 0x2000000000000L) == 0) blackHoles |= 0x10000000000L;
+        if ((blackPawns & 0x5000000000000L) == 0) blackHoles |= 0x20000000000L;
+        if ((blackPawns & 0xa000000000000L) == 0) blackHoles |= 0x40000000000L;
+        if ((blackPawns & 0x14000000000000L) == 0) blackHoles |= 0x80000000000L;
+        if ((blackPawns & 0x28000000000000L) == 0) blackHoles |= 0x100000000000L;
+        if ((blackPawns & 0x50000000000000L) == 0) blackHoles |= 0x200000000000L;
+        if ((blackPawns & 0xa0000000000000L) == 0) blackHoles |= 0x400000000000L;
+        if ((blackPawns & 0x40000000000000L) == 0) blackHoles |= 0x800000000000L;
         //fourth rank holes
-        if ((pieceBoard[11] & 0x2020000000000L) == 0) blackHoles |= 0x100000000L;
-        if ((pieceBoard[11] & 0x5050000000000L) == 0) blackHoles |= 0x200000000L;
-        if ((pieceBoard[11] & 0xa0a0000000000L) == 0) blackHoles |= 0x400000000L;
-        if ((pieceBoard[11] & 0x141400000000000L) == 0) blackHoles |= 0x800000000L;
-        if ((pieceBoard[11] & 0x282800000000000L) == 0) blackHoles |= 0x1000000000L;
-        if ((pieceBoard[11] & 0x505000000000000L) == 0) blackHoles |= 0x2000000000L;
-        if ((pieceBoard[11] & 0xa0a000000000000L) == 0) blackHoles |= 0x4000000000L;
-        if ((pieceBoard[11] & 0x404000000000000L) == 0) blackHoles |= 0x8000000000L;
+        if ((blackPawns & 0x2020000000000L) == 0) blackHoles |= 0x100000000L;
+        if ((blackPawns & 0x5050000000000L) == 0) blackHoles |= 0x200000000L;
+        if ((blackPawns & 0xa0a0000000000L) == 0) blackHoles |= 0x400000000L;
+        if ((blackPawns & 0x141400000000000L) == 0) blackHoles |= 0x800000000L;
+        if ((blackPawns & 0x282800000000000L) == 0) blackHoles |= 0x1000000000L;
+        if ((blackPawns & 0x505000000000000L) == 0) blackHoles |= 0x2000000000L;
+        if ((blackPawns & 0xa0a000000000000L) == 0) blackHoles |= 0x4000000000L;
+        if ((blackPawns & 0x404000000000000L) == 0) blackHoles |= 0x8000000000L;
+        return blackHoles;
     }
     static void update(int square) {
         pieceActivity[square-1] = 0;
@@ -680,7 +683,8 @@ public class ChessProject {
                 break;
             case 7:
                 pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
-                if ((square == 36 || square == 37) && ((1L << (square - 1)) & blackHoles) != 0) {
+                if ((square == 36 || square == 37) && ((1L << (square - 1))
+                & blackHoleRef[(int)((pieceBoard[11] & 0xffff0000000000L) >>> 40)]) != 0) {
                     if (piecePresent(11, translateSquare[square-1][7])
                     || piecePresent(11, translateSquare[square-1][5]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 4 : 2;
@@ -688,7 +692,8 @@ public class ChessProject {
                 break;
             case 8:
                 pieceActivity[square-1] = modifier * Long.bitCount(pieceVision & (~controlledByEnemyPawns));
-                if ((square == 28 || square == 29) && ((1L << (square - 1)) & whiteHoles) != 0) {
+                if ((square == 28 || square == 29) && ((1L << (square - 1))
+                & whiteHoleRef[(int)((pieceBoard[10] & 0xffff00L) >>> 8)]) != 0) {
                     if (piecePresent(12, translateSquare[square-1][1])
                     || piecePresent(12, translateSquare[square-1][3]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -4 : -2;
@@ -696,7 +701,7 @@ public class ChessProject {
                 break;
             case 9:
                 pieceActivity[square-1] = modifier * knightBonus[square-1];
-                if (((1L << (square - 1)) & blackHoles) != 0) {
+                if (((1L << (square - 1)) & blackHoleRef[(int)((pieceBoard[11] & 0xffff0000000000L) >>> 40)]) != 0) {
                     if (piecePresent(11, translateSquare[square-1][7])
                     || piecePresent(11, translateSquare[square-1][5]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? 10 : 5;
@@ -707,7 +712,7 @@ public class ChessProject {
                 int equivalentY = 9 - getY(square);
                 int equivalent = getX(square) + 8 * (equivalentY - 1);
                 pieceActivity[square-1] = modifier * knightBonus[equivalent-1];
-                if (((1L << (square - 1)) & whiteHoles) != 0) {
+                if (((1L << (square - 1)) & whiteHoleRef[(int)((pieceBoard[10] & 0xffff00L) >>> 8)]) != 0) {
                     if (piecePresent(12, translateSquare[square-1][1])
                     || piecePresent(12, translateSquare[square-1][3]))
                     outposts[square-1] = (getX(square) >= 3 && getX(square) <= 6) ? -10 : -5;
@@ -1209,8 +1214,6 @@ public class ChessProject {
         long worthUpdatingDiagonal = 0L;
         long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (pawnStructureChanged) {
-            updateWhitePawnMetrics();
-            updateBlackPawnMetrics();
             long criticalSquares = 0L;
             int startX = getX(start);
             int endX = getX(end);
@@ -1385,8 +1388,6 @@ public class ChessProject {
         long worthUpdatingDiagonal = 0L;
         long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (pawnStructureChanged) {
-            updateWhitePawnMetrics();
-            updateBlackPawnMetrics();
             long criticalSquares = 0L;
             int startX = getX(start);
             int endX = getX(end);
@@ -2062,6 +2063,13 @@ public class ChessProject {
             whitePawnFiles[i] = (pieceBoard[10] & fileref[i]) != 0;
             blackPawnFiles[i] = (pieceBoard[11] & fileref[i]) != 0;
         }
+        long whiteMask, blackMask;
+        for (int i = 0; i < 65536; i++) {
+            whiteMask = (long) (i << 8);
+            blackMask = (long) (i << 40);
+            whiteHoleRef[i] = getWhiteHoles(whiteMask);
+            blackHoleRef[i] = getBlackHoles(blackMask);
+        }
         Scanner scanner = new Scanner(System.in);
         System.out.println("done");
         System.out.print("FEN: ");
@@ -2147,8 +2155,6 @@ public class ChessProject {
             }
             current = fen[++i];
         } while (current != '\0');
-        updateWhitePawnMetrics();
-        updateBlackPawnMetrics();
         updateEvaluation(occupiedSquares(true) | occupiedSquares(false));
         Arrays.fill(absolutePinRestrictions, -1L);
         System.out.print("Show stats? ");
