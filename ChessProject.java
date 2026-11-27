@@ -1562,10 +1562,6 @@ public class ChessProject {
         int start = extractStart(move);
         int end = extractEnd(move);
         int piece = mailbox[start-1];
-        int t = getTranspositionIndex();
-        if (t != -1) {
-            if (extractTranspositionData(dataStorage[t], 1) == move) return Integer.MAX_VALUE;
-        }
         boolean pieceColor = color(piece);
         int modifier = (pieceColor) ? 1 : -1;
         float pieceModifier = 1.0f; //helps prioritize certain pieces over others
@@ -1692,7 +1688,13 @@ public class ChessProject {
     }
     static void sortMoves(int quantity) {
         float tacticalModifier = Math.min(activePieces(), 4) / 4.0f;
+        int t = getTranspositionIndex();
+        int hashedMove = (t == -1) ? 0 : extractTranspositionData(dataStorage[t], 1);
         for (int j = 0; j < quantity; j++) {
+            if (t >= 0 && hashedMove == legalMoveList[j]) {
+                movesWithScores[j] = ((long) (Integer.MIN_VALUE) << 32) | (hashedMove & 0xffffffffL);
+                continue;
+            }
             int score = calculateScore(legalMoveList[j]);
             movesWithScores[j] = ((long) (~score) << 32) | (legalMoveList[j] & 0xffffffffL);
         }
