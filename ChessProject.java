@@ -1988,7 +1988,7 @@ public class ChessProject {
                 if (!isTacticalMove(move) && !inCheck() && (depth == 2 || depth == 3)) {
                     int trial = (int)(evalDepth(depth - 2, alpha, beta, baseLeftBit) >> 32);
                     if (maximizing ? trial <= alpha : trial >= beta) potential = trial;
-                    else potential = (int)(evalDepth(depth - 1, alpha, beta, baseLeftBit >> 32);
+                    else potential = (int)(evalDepth(depth - 1, alpha, beta, baseLeftBit) >> 32);
                 } else {
                     if (maximizing) {
                         int trial = (int)(evalDepth(depth - 1, alpha, alpha + 1, baseLeftBit) >> 32);
