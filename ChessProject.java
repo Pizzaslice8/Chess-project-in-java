@@ -48,6 +48,9 @@ public class ChessProject {
     static int[] pieceActivity = new int[64], material = new int[64], centralControl = new int[64],
     kingSafety = new int[64], space = new int[64], rooksSeventh = new int[64], outposts = new int[64];
     //misc.
+    static long pieceSquares = 0L, whitePieceSquares = 0L, blackPieceSquares = 0L,
+    friendlyPieceSquares = 0L, enemyPieceSquares = 0L;
+    static long opposingAttackMap = 0L;
     static long[] whiteHoleRef = new long[65536];
     static long[] blackHoleRef = new long[65536];
     static long[] expandTemplate = new long[6];
@@ -555,8 +558,8 @@ public class ChessProject {
         //if true, then currentCount gives priority to piece activity, king safety, bishop pair, active rooks,
         //if not, give priority to space, outposts
         int reallyActive = 0;
-        long whitePieces = occupiedSquares(true);
-        long blackPieces = occupiedSquares(false);
+        long whitePieces = whitePieceSquares;
+        long blackPieces = blackPieceSquares;
         while (whitePieces != 0) {
             if (pieceActivity[Long.numberOfTrailingZeros(whitePieces)] >= 8) reallyActive++;
             whitePieces &= (whitePieces-1);
@@ -627,9 +630,8 @@ public class ChessProject {
         int modifier = (piece % 2 == 1) ? 1 : -1;
         int x = getX(square);
         int y = getY(square);
-        long occupied = occupiedSquares(true) | occupiedSquares(false);
         long controlledByEnemyPawns = (piece % 2 == 1) ? getCompositeBitboard(pieceBoard[11], 0L) : getCompositeBitboard(pieceBoard[10], 0L);
-        long pieceVision = getBitboard(square-1, occupied, piece);
+        long pieceVision = getBitboard(square-1, pieceSquares, piece);
         if ((pieceVision & (1L << 27)) != 0 && piece != 1 && piece != 2)
         centralControl[square-1] = centralControl[square-1] + modifier;
         if ((pieceVision & (1L << 28)) != 0 && piece != 1 && piece != 2)
@@ -648,14 +650,14 @@ public class ChessProject {
                 float kingDistance = distanceToCenter[square-1];
                 pieceActivity[square-1] = Math.round(modifier * 2 * (10 - kingDistance * 1.7f) * endgame);
                 float safety = 2 * (10 - kingDistance * 1.7f);
-                long enemyPiecesClose = (occupiedSquares(piece % 2 == 0) & quadrantref[quadrant[square-1]-1]);
+                long enemyPiecesClose = (((piece % 2 == 0) ? whitePieceSquares : blackPieceSquares) & quadrantref[quadrant[square-1]-1]);
                 //only include super close pieces
                 while (enemyPiecesClose != 0) {
                     int squareid = Long.numberOfTrailingZeros(enemyPiecesClose);
                     int newPiece = mailbox[squareid];
                     int worth = Math.abs(materialWorth(newPiece));
                     float dangerFactor = distanceBetweenSquares[square-1][squareid]; //higher = less danger, lower = more danger
-                    long thatPieceVision = getBitboard(squareid, occupied, newPiece);
+                    long thatPieceVision = getBitboard(squareid, pieceSquares, newPiece);
                     while (thatPieceVision != 0) {
                         int squareSeen = Long.numberOfTrailingZeros(thatPieceVision);
                         //factor in how far away  squareSeen is to the king and how powerful the seeing piece is
@@ -807,7 +809,7 @@ public class ChessProject {
         ));
     }
     static boolean isEmpty(int square) {
-        return ((occupiedSquares(true) | occupiedSquares(false)) & (1L << (square-1))) == 0;
+        return (pieceSquares & (1L << (square-1))) == 0;
     }
     static boolean piecePresent(int piece, int square) {
         if (square == 0) return false;
@@ -819,9 +821,8 @@ public class ChessProject {
         long heavyPieces = (checkmateMode > 0) ? (pieceBoard[2] | pieceBoard[4]) : (pieceBoard[3] | pieceBoard[5]);
         long controlledBits = 0L;
         long heavyCopy = heavyPieces;
-        long occupied = occupiedSquares(true) | occupiedSquares(false);
         while (heavyCopy != 0) {
-            controlledBits |= getBitboard(Long.numberOfTrailingZeros(heavyCopy), occupied, 5);
+            controlledBits |= getBitboard(Long.numberOfTrailingZeros(heavyCopy), pieceSquares, 5);
             heavyCopy &= (heavyCopy-1);
         }
         int currentX, currentY, currentSquare, sizeX = 1, sizeY = 1;
@@ -866,7 +867,6 @@ public class ChessProject {
     static void displayStats() {
         int materialCount = 0, pieceActivityCount = 0, centralControlCount = 0,
         kingSafetyCount = 0, spaceCount = 0, rookCount = 0, outpostsCount = 0;
-        long occupied = occupiedSquares(true) | occupiedSquares(false);
         for (int s = 0; s < 64; s++) {
             materialCount += material[s];
             pieceActivityCount += pieceActivity[s];
@@ -875,13 +875,12 @@ public class ChessProject {
             spaceCount += space[s];
             rookCount += rooksSeventh[s];
             outpostsCount += outposts[s];
-            occupied &= (occupied-1);
         }
         System.out.print("Current zobrist hash: ");
         System.out.println(currentZobrist);
         System.out.println("In check? " + ((inCheck()) ? "yes" : "no"));
         System.out.print("Legal moves: ");
-        int quantity = generateMoves(getCompositeBitboard(occupiedSquares(position[0] == 0), occupied));
+        int quantity = generateMoves();
         for (int i = 0; i < quantity; i++) {
             int start = extractStart(legalMoveList[i]);
             int end = extractEnd(legalMoveList[i]);
@@ -928,11 +927,10 @@ public class ChessProject {
         System.out.print("Static evaluation: ");
         System.out.println(currentCount());
     }
-    static long legalMovesBasic(int square, long opposingAttackMap) {
+    static long legalMovesBasic(int square) {
         long output = 0L;
         int piece = mailbox[square-1];
         boolean color = color(piece);
-        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (piece == 11) {
             //pawn
             int candidate = translateSquare[square-1][1];
@@ -955,7 +953,7 @@ public class ChessProject {
                     output |= (1L << (candidate-1));
                 }
             }
-            if (position[5] != 0 && (pieces & (1L << (position[5]-1))) == 0 &&
+            if (position[5] != 0 && (pieceSquares & (1L << (position[5]-1))) == 0 &&
                     (position[5] == translateSquare[square-1][1] || position[5] == translateSquare[square-1][3])) {
                 output |= (1L << (position[5]-1));
             }
@@ -981,12 +979,12 @@ public class ChessProject {
                     output |= (1L << (candidate-1));
                 }
             }
-            if (position[5] != 0 && (pieces & (1L << (position[5]-1))) == 0 &&
+            if (position[5] != 0 && (pieceSquares & (1L << (position[5]-1))) == 0 &&
                     (position[5] == translateSquare[square-1][7] || position[5] == translateSquare[square-1][5])) {
                 output |= (1L << (position[5]-1));
             }
         } else {
-            long squares = getBitboard(square-1, pieces, piece);
+            long squares = getBitboard(square-1, pieceSquares, piece);
             while (squares != 0) {
                 int p = mailbox[Long.numberOfTrailingZeros(squares)];
                 if (p == 0 || (color(p) != color && p != 1 && p != 2)) {
@@ -1210,9 +1208,14 @@ public class ChessProject {
         position[0] = 1 - position[0];
         currentZobrist ^= whiteToMove;
         currentZobrist ^= blackToMove;
+        whitePieceSquares = occupiedSquares(true);
+        blackPieceSquares = occupiedSquares(false);
+        friendlyPieceSquares = occupiedSquares(position[0] == 1);
+        enemyPieceSquares = occupiedSquares(position[0] == 0);
+        pieceSquares = whitePieceSquares | blackPieceSquares;
+        opposingAttackMap = getCompositeBitboard(enemyPieceSquares, pieceSquares);
         long worthUpdatingHorizontal = 0L;
         long worthUpdatingDiagonal = 0L;
-        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (pawnStructureChanged) {
             long criticalSquares = 0L;
             int startX = getX(start);
@@ -1238,21 +1241,21 @@ public class ChessProject {
                     //knight's distance from the end square, so -15 and -17 for white, +15 and +17 for black
                     if (endX != 1) criticalSquares |= 1L << (end - 18);
                     if (endX != 8) criticalSquares |= 1L << (end - 16);
-                    worthUpdatingHorizontal |= getBitboard(end - 9, pieces, 5);
-                    worthUpdatingDiagonal |= getBitboard(end - 9, pieces, 7);
+                    worthUpdatingHorizontal |= getBitboard(end - 9, pieceSquares, 5);
+                    worthUpdatingDiagonal |= getBitboard(end - 9, pieceSquares, 7);
                 }
                 if (piece == 12) {
                     if (endX != 1) criticalSquares |= 1L << (end + 14);
                     if (endX != 8) criticalSquares |= 1L << (end + 16);
-                    worthUpdatingHorizontal |= getBitboard(end + 7, pieces, 5);
-                    worthUpdatingDiagonal |= getBitboard(end + 7, pieces, 7);
+                    worthUpdatingHorizontal |= getBitboard(end + 7, pieceSquares, 5);
+                    worthUpdatingDiagonal |= getBitboard(end + 7, pieceSquares, 7);
                 }
             }
             updateEvaluation(criticalSquares & (pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]));
             while (criticalSquares != 0) {
                 int criticalSquare = Long.numberOfTrailingZeros(criticalSquares);
-                worthUpdatingHorizontal |= getBitboard(criticalSquare, pieces, 5);
-                worthUpdatingDiagonal |= getBitboard(criticalSquare, pieces, 7);
+                worthUpdatingHorizontal |= getBitboard(criticalSquare, pieceSquares, 5);
+                worthUpdatingDiagonal |= getBitboard(criticalSquare, pieceSquares, 7);
                 criticalSquares &= (criticalSquares - 1);
             }
         }
@@ -1261,41 +1264,41 @@ public class ChessProject {
         if (start == 5 && end == 3) {
             update(1);
             update(4);
-            worthUpdatingHorizontal |= getBitboard(0, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(3, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(0, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(3, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(0, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(3, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(0, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(3, pieceSquares, 7);
         }
         if (start == 5 && end == 7) {
             update(6);
             update(8);
-            worthUpdatingHorizontal |= getBitboard(5, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(7, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(5, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(7, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(5, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(7, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(5, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(7, pieceSquares, 7);
         }
         if (start == 61 && end == 59) {
             //black castle long
             update(57);
             update(60);
-            worthUpdatingHorizontal |= getBitboard(56, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(59, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(56, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(59, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(56, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(59, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(56, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(59, pieceSquares, 7);
         }
         if (start == 61 && end == 63) {
             //black castle short
             update(62);
             update(64);
-            worthUpdatingHorizontal |= getBitboard(61, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(63, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(61, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(63, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(61, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(63, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(61, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(63, pieceSquares, 7);
         }
-        worthUpdatingHorizontal |= getBitboard(start - 1, pieces, 5);
-        worthUpdatingHorizontal |= getBitboard(end - 1, pieces, 5);
-        worthUpdatingDiagonal |= getBitboard(start - 1, pieces, 7);
-        worthUpdatingDiagonal |= getBitboard(end - 1, pieces, 7);
+        worthUpdatingHorizontal |= getBitboard(start - 1, pieceSquares, 5);
+        worthUpdatingHorizontal |= getBitboard(end - 1, pieceSquares, 5);
+        worthUpdatingDiagonal |= getBitboard(start - 1, pieceSquares, 7);
+        worthUpdatingDiagonal |= getBitboard(end - 1, pieceSquares, 7);
         updateEvaluation(worthUpdatingHorizontal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]));
         updateEvaluation(worthUpdatingDiagonal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[6] | pieceBoard[7]));
         if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
@@ -1384,9 +1387,14 @@ public class ChessProject {
                 mailbox[56] = 6;
             }
         }
+        whitePieceSquares = occupiedSquares(true);
+        blackPieceSquares = occupiedSquares(false);
+        friendlyPieceSquares = occupiedSquares(position[0] == 1);
+        enemyPieceSquares = occupiedSquares(position[0] == 0);
+        pieceSquares = whitePieceSquares | blackPieceSquares;
+        opposingAttackMap = getCompositeBitboard(enemyPieceSquares, pieceSquares);
         long worthUpdatingHorizontal = 0L;
         long worthUpdatingDiagonal = 0L;
-        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (pawnStructureChanged) {
             long criticalSquares = 0L;
             int startX = getX(start);
@@ -1412,21 +1420,21 @@ public class ChessProject {
                     //knight's distance from the end square, so -15 and -17 for white, +15 and +17 for black
                     if (endX != 1) criticalSquares |= 1L << (end - 18);
                     if (endX != 8) criticalSquares |= 1L << (end - 16);
-                    worthUpdatingHorizontal |= getBitboard(end - 9, pieces, 5);
-                    worthUpdatingDiagonal |= getBitboard(end - 9, pieces, 7);
+                    worthUpdatingHorizontal |= getBitboard(end - 9, pieceSquares, 5);
+                    worthUpdatingDiagonal |= getBitboard(end - 9, pieceSquares, 7);
                 }
                 if (movedPiece == 12) {
                     if (endX != 1) criticalSquares |= 1L << (end + 14);
                     if (endX != 8) criticalSquares |= 1L << (end + 16);
-                    worthUpdatingHorizontal |= getBitboard(end + 7, pieces, 5);
-                    worthUpdatingDiagonal |= getBitboard(end + 7, pieces, 7);
+                    worthUpdatingHorizontal |= getBitboard(end + 7, pieceSquares, 5);
+                    worthUpdatingDiagonal |= getBitboard(end + 7, pieceSquares, 7);
                 }
             }
             updateEvaluation(criticalSquares & (pieceBoard[6] | pieceBoard[7] | pieceBoard[8] | pieceBoard[9]));
             while (criticalSquares != 0) {
                 int criticalSquare = Long.numberOfTrailingZeros(criticalSquares);
-                worthUpdatingHorizontal |= getBitboard(criticalSquare, pieces, 5);
-                worthUpdatingDiagonal |= getBitboard(criticalSquare, pieces, 7);
+                worthUpdatingHorizontal |= getBitboard(criticalSquare, pieceSquares, 5);
+                worthUpdatingDiagonal |= getBitboard(criticalSquare, pieceSquares, 7);
                 criticalSquares &= (criticalSquares - 1);
             }
         }
@@ -1434,60 +1442,57 @@ public class ChessProject {
         if (start == 5 && end == 3) {
             update(1);
             update(4);
-            worthUpdatingHorizontal |= getBitboard(0, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(3, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(0, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(3, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(0, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(3, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(0, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(3, pieceSquares, 7);
         }
         if (start == 5 && end == 7) {
             update(6);
             update(8);
-            worthUpdatingHorizontal |= getBitboard(5, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(7, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(5, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(7, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(5, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(7, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(5, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(7, pieceSquares, 7);
         }
         if (start == 61 && end == 59) {
             //black castle long
             update(57);
             update(60);
-            worthUpdatingHorizontal |= getBitboard(56, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(59, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(56, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(59, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(56, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(59, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(56, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(59, pieceSquares, 7);
         }
         if (start == 61 && end == 63) {
             //black castle short
             update(62);
             update(64);
-            worthUpdatingHorizontal |= getBitboard(61, pieces, 5);
-            worthUpdatingHorizontal |= getBitboard(63, pieces, 5);
-            worthUpdatingDiagonal |= getBitboard(61, pieces, 7);
-            worthUpdatingDiagonal |= getBitboard(63, pieces, 7);
+            worthUpdatingHorizontal |= getBitboard(61, pieceSquares, 5);
+            worthUpdatingHorizontal |= getBitboard(63, pieceSquares, 5);
+            worthUpdatingDiagonal |= getBitboard(61, pieceSquares, 7);
+            worthUpdatingDiagonal |= getBitboard(63, pieceSquares, 7);
         }
-        worthUpdatingHorizontal |= getBitboard(start - 1, pieces, 5);
-        worthUpdatingHorizontal |= getBitboard(end - 1, pieces, 5);
-        worthUpdatingDiagonal |= getBitboard(start - 1, pieces, 7);
-        worthUpdatingDiagonal |= getBitboard(end - 1, pieces, 7);
+        worthUpdatingHorizontal |= getBitboard(start - 1, pieceSquares, 5);
+        worthUpdatingHorizontal |= getBitboard(end - 1, pieceSquares, 5);
+        worthUpdatingDiagonal |= getBitboard(start - 1, pieceSquares, 7);
+        worthUpdatingDiagonal |= getBitboard(end - 1, pieceSquares, 7);
         updateEvaluation(worthUpdatingHorizontal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]));
         updateEvaluation(worthUpdatingDiagonal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[6] | pieceBoard[7]));
         if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
         if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
         currentZobrist = zobristBefore;
     }
-    static long legalMoves(int square, long checkingPieces, long opposingAttackMap) {
+    static long legalMoves(int square, long checkingPieces) {
         int piece = mailbox[square-1];
         int checkStatus = Long.bitCount(checkingPieces);
-        long occupied = occupiedSquares(true) | occupiedSquares(false);
-        long opposingPieces = occupiedSquares(position[0] == 0);
         if (checkStatus > 1) {
             if (piece != 1 && piece != 2) return 0L;
-            return getBitboard(square-1, occupied, piece) & (~opposingAttackMap);
+            return getBitboard(square-1, pieceSquares, piece) & (~opposingAttackMap);
         }
         int origin = Long.numberOfTrailingZeros(checkingPieces);
         int checkingPiece = (checkStatus == 0) ? 0 : mailbox[origin];
-        long friendlyPieces = occupiedSquares(position[0] == 1);
-        long basic = legalMovesBasic(square, opposingAttackMap);
+        long basic = legalMovesBasic(square);
         long out = basic & absolutePinRestrictions[square-1];
         if (checkStatus == 1) return out & buildCheckRay(origin + 1, mailbox[origin]);
         if (piece == 1 || piece == 2) return basic & (~opposingAttackMap);
@@ -1531,29 +1536,27 @@ public class ChessProject {
     }
     static boolean inCheck() {
         int kingSquare = Long.numberOfTrailingZeros(pieceBoard[1 - position[0]]);
-        long pieces = occupiedSquares(true) | occupiedSquares(false);
         if (position[0] == 1) {
-            if ((getBitboard(kingSquare, pieces, 6) & (pieceBoard[5] | pieceBoard[3])) != 0) return true;
-            if ((getBitboard(kingSquare, pieces, 8) & (pieceBoard[7] | pieceBoard[3])) != 0) return true;
-            if ((getBitboard(kingSquare, pieces, 10) & pieceBoard[9]) != 0) return true;
-            if ((getBitboard(kingSquare, pieces, 11) & pieceBoard[11]) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 6) & (pieceBoard[5] | pieceBoard[3])) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 8) & (pieceBoard[7] | pieceBoard[3])) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 10) & pieceBoard[9]) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 11) & pieceBoard[11]) != 0) return true;
         } else {
-            if ((getBitboard(kingSquare, pieces, 5) & (pieceBoard[4] | pieceBoard[2])) != 0) return true;
-            if ((getBitboard(kingSquare, pieces, 7) & (pieceBoard[6] | pieceBoard[2])) != 0) return true;
-            if ((getBitboard(kingSquare, pieces, 9) & pieceBoard[8]) != 0) return true;
-            if ((getBitboard(kingSquare, pieces, 12) & pieceBoard[10]) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 5) & (pieceBoard[4] | pieceBoard[2])) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 7) & (pieceBoard[6] | pieceBoard[2])) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 9) & pieceBoard[8]) != 0) return true;
+            if ((getBitboard(kingSquare, pieceSquares, 12) & pieceBoard[10]) != 0) return true;
         }
         return false;
     }
     static long checkPieces() {
         //returns checking pieces
-        long occupied = occupiedSquares(true) | occupiedSquares(false);
         long output = 0L;
-        long opposingPieces = occupiedSquares(position[0] == 0);
+        long opposingPieces = enemyPieceSquares;
         long kingBit = pieceBoard[1 - position[0]];
         while (opposingPieces != 0) {
             int squareid = Long.numberOfTrailingZeros(opposingPieces);
-            if ((getBitboard(squareid, occupied, mailbox[squareid]) & kingBit) != 0) output |= Long.lowestOneBit(opposingPieces);
+            if ((getBitboard(squareid, pieceSquares, mailbox[squareid]) & kingBit) != 0) output |= Long.lowestOneBit(opposingPieces);
             opposingPieces &= (opposingPieces - 1);
         }
         return output;
@@ -1615,10 +1618,10 @@ public class ChessProject {
         }
         return Math.round(cumulative * pieceModifier);
     }
-    static int generateTacticalMoves(long opposingAttackMap) {
-        long squares = occupiedSquares(position[0] == 1);
+    static int generateTacticalMoves() {
+        long squares = friendlyPieceSquares;
         long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
-        long enemyPieces = occupiedSquares(position[0] == 0);
+        long enemyPieces = enemyPieceSquares;
         long check = checkPieces();
         if (check != 0) Arrays.fill(absolutePinRestrictions, -1L);
         else {
@@ -1639,7 +1642,7 @@ public class ChessProject {
         int quantity = 0;
         while (squares != 0) {
             int square = Long.numberOfTrailingZeros(squares);
-            long allMoves = legalMoves(square+1, check, opposingAttackMap);
+            long allMoves = legalMoves(square+1, check);
             while (allMoves != 0) {
                 int candidate = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
                 if (isTacticalMove(candidate)) tacticalMoves[quantity++] = candidate;
@@ -1649,10 +1652,10 @@ public class ChessProject {
         }
         return quantity;
     }
-    static int generateMoves(long opposingAttackMap) {
-        long squares = occupiedSquares(position[0] == 1);
+    static int generateMoves() {
+        long squares = friendlyPieceSquares;
         long friendlyPieces = squares & (~(pieceBoard[0] | pieceBoard[1]));
-        long enemyPieces = occupiedSquares(position[0] == 0);
+        long enemyPieces = enemyPieceSquares;
         long check = checkPieces();
         if (check != 0) Arrays.fill(absolutePinRestrictions, -1L);
         else {
@@ -1673,7 +1676,7 @@ public class ChessProject {
         int quantity = 0;
         while (squares != 0) {
             int square = Long.numberOfTrailingZeros(squares);
-            long allMoves = legalMoves(square+1, check, opposingAttackMap);
+            long allMoves = legalMoves(square+1, check);
             while (allMoves != 0) {
                 legalMoveList[quantity++] = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
                 allMoves &= (allMoves - 1);
@@ -1723,7 +1726,7 @@ public class ChessProject {
     }
     static boolean sufficientMaterial() {
         int whiteKnights = Long.bitCount(pieceBoard[8]), blackKnights = Long.bitCount(pieceBoard[9]),
-        whitePieces = Long.bitCount(occupiedSquares(true) ^ pieceBoard[0]), blackPieces = Long.bitCount(occupiedSquares(false) ^ pieceBoard[1]);
+        whitePieces = Long.bitCount(whitePieceSquares ^ pieceBoard[0]), blackPieces = Long.bitCount(blackPieceSquares ^ pieceBoard[1]);
         if ((pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5] | pieceBoard[10] | pieceBoard[11]) != 0) return true;
         if (whitePieces == 2 && whiteKnights < 2) return true;
         if (blackPieces == 2 && blackKnights < 2) return true;
@@ -1828,9 +1831,8 @@ public class ChessProject {
         }
         //if checked, consider all legal moves, if not, only consider tactical moves
         int quantity;
-        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
         if (inCheck()) {
-            quantity = generateMoves(opposingAttackMap);
+            quantity = generateMoves();
             sortMoves(quantity);
             System.arraycopy(legalMoveList, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
@@ -1860,7 +1862,7 @@ public class ChessProject {
                 if (alpha >= beta) break;
             }
         } else {
-            quantity = generateTacticalMoves(opposingAttackMap);
+            quantity = generateTacticalMoves();
             sortTacticalMoves(quantity);
             System.arraycopy(tacticalMoves, 0, movesStorageQ[depth], 0, quantity);
             for (int i = 0; i < quantity; i++) {
@@ -1955,8 +1957,7 @@ public class ChessProject {
             }
         }
         if (depth == 0) return ((long)evalQ(alpha, beta, 0)) << 32;
-        long opposingAttackMap = getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false));
-        int quantity = generateMoves(opposingAttackMap);
+        int quantity = generateMoves();
         if (quantity == 0) {
             if (inCheck()) return (position[0] == 1) ? (-8000 << 32) : (8000 << 32);
             return 0;
@@ -2155,16 +2156,20 @@ public class ChessProject {
             }
             current = fen[++i];
         } while (current != '\0');
-        updateEvaluation(occupiedSquares(true) | occupiedSquares(false));
+        whitePieceSquares = occupiedSquares(true);
+        blackPieceSquares = occupiedSquares(false);
+        friendlyPieceSquares = occupiedSquares(position[0] == 1);
+        enemyPieceSquares = occupiedSquares(position[0] == 0);
+        pieceSquares = whitePieceSquares | blackPieceSquares;
+        updateEvaluation(pieceSquares);
         Arrays.fill(absolutePinRestrictions, -1L);
         System.out.print("Show stats? ");
         if (scanner.nextBoolean()) {
             display();
             displayStats();    
         }
-        long pieceSquares = occupiedSquares(position[0] == 1);
         if (!sufficientMaterial() || position[6] >= 100) return 6;
-        int quantity = generateMoves(getCompositeBitboard(occupiedSquares(position[0] == 0), occupiedSquares(true) | occupiedSquares(false)));
+        int quantity = generateMoves();
         if (quantity == 0) return 6;
         System.out.print("Depth: ");
         maxDepth = scanner.nextInt();
