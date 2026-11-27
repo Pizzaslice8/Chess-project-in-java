@@ -448,11 +448,55 @@ public class ChessProject {
         return whiteBonus + blackBonus;
     }
     static int currentCount() {
+        Arrays.fill(kingSafety, 0);
+        float endgamePercent = percentEndgame();
+        int whiteKingSquare = Long.numberOfTrailingZeros(pieceBoard[0]);
+        int blackKingSquare = Long.numberOfTrailingZeros(pieceBoard[1]);
+        float whiteKingDistance = distanceToCenter[whiteKingSquare];
+        float blackKingDistance = distanceToCenter[blackKingSquare];
+        float whiteKingActivity = 2 * (10 - whiteKingDistance * 1.7f) * endgamePercent;
+        float blackKingActivity = -2 * (10 - blackKingDistance * 1.7f) * endgamePercent;
+        float whiteKingSafety = 2 * (10 - whiteKingDistance * 1.7f) * (1 - endgamePercent);
+        float blackKingSafety = -2 * (10 - blackKingDistance * 1.7f) * (1 - endgamePercent);
+        long blackPiecesClose = blackPieceSquares & quadrantref[quadrant[whiteKingSquare]-1];
+        long whitePiecesClose = whitePieceSquares & quadrantref[quadrant[blackKingSquare]-1];
+        //only include super close pieces
+        while (blackPiecesClose != 0) {
+            int squareid = Long.numberOfTrailingZeros(blackPiecesClose);
+            int newPiece = mailbox[squareid];
+            int worth = Math.abs(materialWorth(newPiece));
+            float dangerFactor = distanceBetweenSquares[whiteKingSquare][squareid]; //higher = less danger, lower = more danger
+            long thatPieceVision = getBitboard(squareid, pieceSquares, newPiece);
+            while (thatPieceVision != 0) {
+                int squareSeen = Long.numberOfTrailingZeros(thatPieceVision);
+                //factor in how far away squareSeen is to the king and how powerful the seeing piece is
+                dangerFactor *= distanceBetweenSquares[whiteKingSquare][squareSeen];
+                if (dangerFactor != 0) whiteKingSafety -= worth / dangerFactor;
+                thatPieceVision &= (thatPieceVision - 1);
+            }
+            blackPiecesClose &= (blackPiecesClose - 1);
+        }
+        while (whitePiecesClose != 0) {
+            int squareid = Long.numberOfTrailingZeros(whitePiecesClose);
+            int newPiece = mailbox[squareid];
+            int worth = Math.abs(materialWorth(newPiece));
+            float dangerFactor = distanceBetweenSquares[blackKingSquare][squareid];
+            long thatPieceVision = getBitboard(squareid, pieceSquares, newPiece);
+            while (thatPieceVision != 0) {
+                int squareSeen = Long.numberOfTrailingZeros(thatPieceVision);
+                //factor in how far away squareSeen is to the king and how powerful the seeing piece is
+                dangerFactor *= distanceBetweenSquares[blackKingSquare][squareSeen];
+                if (dangerFactor != 0) blackKingSafety += worth / dangerFactor;
+                thatPieceVision &= (thatPieceVision - 1);
+            }
+            whitePiecesClose &= (whitePiecesClose - 1);
+        }
+        kingSafety[whiteKingSquare] = Math.round(whiteKingActivity + whiteKingSafety);
+        kingSafety[blackKingSquare] = Math.round(blackKingActivity + blackKingSafety);       
         int outputTactical = 0;
         int outputNontactical = 0;
         int materialDifferential = 0;
         float activePiecesModifier = Math.min(activePieces(), 4) / 4.0f;
-        float endgamePercent = percentEndgame();
         for (int i = 0; i < 64; i++) {
             outputTactical += pieceActivity[i] + centralControl[i]
             + kingSafety[i] + rooksSeventh[i] + (space[i] + outposts[i]) / 3;
@@ -621,7 +665,6 @@ public class ChessProject {
         pieceActivity[square-1] = 0;
         material[square-1] = 0;
         centralControl[square-1] = 0;
-        kingSafety[square-1] = 0;
         space[square-1] = 0;
         rooksSeventh[square-1] = 0;
         outposts[square-1] = 0;
@@ -644,31 +687,6 @@ public class ChessProject {
         float endgame;
         int addition;
         switch (piece) {
-            case 1:
-            case 2:
-                endgame = percentEndgame();
-                float kingDistance = distanceToCenter[square-1];
-                pieceActivity[square-1] = Math.round(modifier * 2 * (10 - kingDistance * 1.7f) * endgame);
-                float safety = 2 * (10 - kingDistance * 1.7f);
-                long enemyPiecesClose = (((piece % 2 == 0) ? whitePieceSquares : blackPieceSquares) & quadrantref[quadrant[square-1]-1]);
-                //only include super close pieces
-                while (enemyPiecesClose != 0) {
-                    int squareid = Long.numberOfTrailingZeros(enemyPiecesClose);
-                    int newPiece = mailbox[squareid];
-                    int worth = Math.abs(materialWorth(newPiece));
-                    float dangerFactor = distanceBetweenSquares[square-1][squareid]; //higher = less danger, lower = more danger
-                    long thatPieceVision = getBitboard(squareid, pieceSquares, newPiece);
-                    while (thatPieceVision != 0) {
-                        int squareSeen = Long.numberOfTrailingZeros(thatPieceVision);
-                        //factor in how far away  squareSeen is to the king and how powerful the seeing piece is
-                        dangerFactor *= distanceBetweenSquares[square-1][squareSeen];
-                        if (dangerFactor != 0) safety -= worth / dangerFactor;
-                        thatPieceVision &= (thatPieceVision - 1);
-                    }
-                    enemyPiecesClose &= (enemyPiecesClose - 1);
-                }
-                kingSafety[square-1] = Math.round(modifier * safety * (1 - endgame));
-                break;
             case 3:
             case 4:
                 pieceActivity[square-1] = modifier * (Long.bitCount(pieceVision & (~controlledByEnemyPawns)) / 2);
@@ -1027,9 +1045,6 @@ public class ChessProject {
         boolean pawnStructureChanged = piece == 11 || piece == 12 || captured == 11 || captured == 12;
         int whiteKing = Long.numberOfTrailingZeros(pieceBoard[0]);
         int blackKing = Long.numberOfTrailingZeros(pieceBoard[1]);
-        boolean kingSafetyChanged = piece == 1 || piece == 2
-        || quadrant[start-1] == quadrant[whiteKing] || quadrant[end-1] == quadrant[whiteKing]
-        || quadrant[start-1] == quadrant[blackKing] || quadrant[end-1] == quadrant[blackKing];
         if (position[5] != 0 && piece != 11 && piece != 12) {
             currentZobrist ^= zobrist[position[5]-1][12];
             position[5] = 0;
@@ -1301,8 +1316,7 @@ public class ChessProject {
         worthUpdatingDiagonal |= getBitboard(end - 1, pieceSquares, 7);
         updateEvaluation(worthUpdatingHorizontal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]));
         updateEvaluation(worthUpdatingDiagonal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[6] | pieceBoard[7]));
-        if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
-        if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
+        if (tacticalMove) updateEvaluation(pieceBoard[10] | pieceBoard[11]);
     }
     static void undoMove(int move, int movedPiece, int captured, boolean wcsBefore, boolean wclBefore,
     boolean bcsBefore, boolean bclBefore, int enPassantSquareBefore, int halfmoveBefore, long zobristBefore) {
@@ -1324,9 +1338,6 @@ public class ChessProject {
         boolean pawnStructureChanged = movedPiece == 11 || movedPiece == 12 || captured == 11 || captured == 12;
         int whiteKing = Long.numberOfTrailingZeros(pieceBoard[0]);
         int blackKing = Long.numberOfTrailingZeros(pieceBoard[1]);
-        boolean kingSafetyChanged = movedPiece == 1 || movedPiece == 2
-        || quadrant[start-1] == quadrant[whiteKing] || quadrant[end-1] == quadrant[whiteKing]
-        || quadrant[start-1] == quadrant[blackKing] || quadrant[end-1] == quadrant[blackKing];
         position[0] = 1 - position[0];
         position[5] = enPassantSquareBefore;
         position[6] = halfmoveBefore;
@@ -1479,8 +1490,7 @@ public class ChessProject {
         worthUpdatingDiagonal |= getBitboard(end - 1, pieceSquares, 7);
         updateEvaluation(worthUpdatingHorizontal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[4] | pieceBoard[5]));
         updateEvaluation(worthUpdatingDiagonal & (pieceBoard[2] | pieceBoard[3] | pieceBoard[6] | pieceBoard[7]));
-        if (tacticalMove) updateEvaluation(pieceBoard[0] | pieceBoard[1] | pieceBoard[10] | pieceBoard[11]);
-        if (kingSafetyChanged) updateEvaluation(pieceBoard[0] | pieceBoard[1]);
+        if (tacticalMove) updateEvaluation(pieceBoard[10] | pieceBoard[11]);
         currentZobrist = zobristBefore;
     }
     static long legalMoves(int square, long checkingPieces) {
