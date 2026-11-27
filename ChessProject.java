@@ -309,12 +309,46 @@ public class ChessProject {
         return output;
     }
     static int occupancyIndexRook(int squareid, long occupancy) {
-        long before = (occupancy & rookVision[squareid]) * rookMagic[squareid];
-        return (int) (before >>> (64 - Long.bitCount(rookVision[squareid])));
+        long mask = rookVision[squareid];
+        occupancy &= mask;           
+        long mk = ~mask << 1;
+    
+        for (int i = 0; i < 6; i++) {
+            long mp = mk ^ (mk << 1);
+            mp = mp ^ (mp << 2);
+            mp = mp ^ (mp << 4);
+            mp = mp ^ (mp << 8);
+            mp = mp ^ (mp << 16);
+            mp = mp ^ (mp << 32);
+    
+            long mv = mp & mask;
+            mask = (mask ^ mv) | (mv >>> (1 << i));
+            long t = occupancy & mv;
+            occupancy = (occupancy ^ t) | (t >>> (1 << i));
+            mk = mk & ~mp;
+        }
+        return (int) occupancy;
     }
     static int occupancyIndexBishop(int squareid, long occupancy) {
-        long before = (occupancy & bishopVision[squareid]) * bishopMagic[squareid];
-        return (int) (before >>> (64 - Long.bitCount(bishopVision[squareid])));
+        long mask = bishopVision[squareid];
+        occupancy &= mask;           
+        long mk = ~mask << 1;
+    
+        for (int i = 0; i < 6; i++) {
+            long mp = mk ^ (mk << 1);
+            mp = mp ^ (mp << 2);
+            mp = mp ^ (mp << 4);
+            mp = mp ^ (mp << 8);
+            mp = mp ^ (mp << 16);
+            mp = mp ^ (mp << 32);
+    
+            long mv = mp & mask;
+            mask = (mask ^ mv) | (mv >>> (1 << i));
+            long t = occupancy & mv;
+            occupancy = (occupancy ^ t) | (t >>> (1 << i));
+            mk = mk & ~mp;
+        }
+        return (int) occupancy;
     }
     static long expand(long occupancy, long mask) {
         //Long.compress and Long.expand don't exist on some mobile apps for java
