@@ -23,7 +23,6 @@ public class ChessProject {
     static int[] tacticalMoves = new int[218];
     static long[] movesWithScores = new long[218];
     static long[] tacticalMovesWithScores = new long[218];
-    static long[] moveBoards = new long[64];
     static long[] absolutePinRestrictions = new long[64];
     static boolean[] whitePawnFiles = new boolean[8];
     static boolean[] blackPawnFiles = new boolean[8];
@@ -1638,16 +1637,15 @@ public class ChessProject {
             }
         }
         int quantity = 0;
-        for (int square = 0; square < 64; square++) {
-            if ((squares & (1L << square)) == 0) moveBoards[square] = 0L;
-            else {
-                long allMoves = legalMoves(square+1, check, opposingAttackMap);
-                while (allMoves != 0) {
-                    int move = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
-                    if (isTacticalMove(move)) tacticalMoves[quantity++] = move;
-                    allMoves &= (allMoves - 1);
-                }
+        while (squares != 0) {
+            int square = Long.numberOfTrailingZeros(squares);
+            long allMoves = legalMoves(square+1, check, opposingAttackMap);
+            while (allMoves != 0) {
+                int candidate = compress(square+1, Long.numberOfTrailingZeros(allMoves)+1);
+                if (isTacticalMove(candidate)) tacticalMoves[quantity++] = candidate;
+                allMoves &= (allMoves - 1);
             }
+            squares &= (squares - 1);
         }
         return quantity;
     }
@@ -1674,7 +1672,6 @@ public class ChessProject {
             }
         }
         int quantity = 0;
-        Arrays.fill(moveBoards, 0L);
         while (squares != 0) {
             int square = Long.numberOfTrailingZeros(squares);
             long allMoves = legalMoves(square+1, check, opposingAttackMap);
